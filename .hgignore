@@ -1,0 +1,8 @@
+syntax: glob
+elf2st/elf2st/Debug/*
+elf2st/Debug/*
+elf2st/ipch/*
+elf2st/*.sdf
+elf2st/*.suo
+elf2st/*.filters
+elf2st/*.user
