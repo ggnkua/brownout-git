@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual C++ Express 2010
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "elf2st", "elf2st\elf2st.vcxproj", "{671CDB7D-9C55-4433-BC84-1FCD0758D5FE}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "brownout", "brownout\brownout.vcxproj", "{671CDB7D-9C55-4433-BC84-1FCD0758D5FE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
