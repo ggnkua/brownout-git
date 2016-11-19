@@ -23,8 +23,14 @@ THE SOFTWARE.
 */
 
 #ifdef _MSC_VER
-  #define _SCL_SECURE_NO_WARNINGS
-  #define ELFIO_NO_INTTYPES
+#define _SCL_SECURE_NO_WARNINGS
+#define ELFIO_NO_INTTYPES
+// Yes yes dear, fopen is insecure, blah blah. We know.
+// Don't bug us about it.
+#define CRT_SECURE_NO_WARNINGS
+// Let's make sure struct members are aligned to 2 bytes.
+// I wouldn't have put this here unless I got bit by this nonsense.
+#pragma pack(2)
 #endif
 
 #include <iostream>
@@ -92,7 +98,7 @@ int main( int argc, char** argv )
     }
 
     elfio reader;
-    
+
     if ( !reader.load( argv[1] ) ) {
         printf( "File %s is not found or it is not an ELF file\n", argv[1] );
         return 1;
@@ -143,13 +149,13 @@ int main( int argc, char** argv )
         toshead.PRGFLAGS=atoi(argv[3]);
 
     uint32_t file_offset=28;        //first text section after the tos header
-    ST_SECTION program_sections[32];
-    int no_sections=0;
+    ST_SECTION prg_sect[32];
+    int no_sect=0;
 
     section *psec;
 
     // TODO: refactor the following 3 loops into 1 by
-    // making program_sections [32][3] and iterating once again
+    // making prg_sect [32][3] and iterating once again
     // to determine offsets into file?
 
     // Group text segments and determine their position inside the output file
@@ -159,15 +165,15 @@ int main( int argc, char** argv )
         if (psec->get_type()==SHT_PROGBITS &&
             psec->get_name()==".text")
         {
-            program_sections[no_sections].type=SECT_TEXT;
-            program_sections[no_sections].offset=file_offset;
-            program_sections[no_sections].section_no=i;
-            program_sections[no_sections].size=psec->get_size();
-            program_sections[no_sections].data=psec->get_data();
+            prg_sect[no_sect].type=SECT_TEXT;
+            prg_sect[no_sect].offset=file_offset;
+            prg_sect[no_sect].section_no=i;
+            prg_sect[no_sect].size=psec->get_size();
+            prg_sect[no_sect].data=psec->get_data();
 
             file_offset+=psec->get_size();
             toshead.PRG_tsize+=psec->get_size();
-            no_sections++;
+            no_sect++;
         }
     }
 
@@ -178,14 +184,14 @@ int main( int argc, char** argv )
         if (psec->get_type()==SHT_PROGBITS &&
             psec->get_name()==".data")
         {
-            program_sections[no_sections].type=SECT_DATA;
-            program_sections[no_sections].offset=file_offset;
-            program_sections[no_sections].section_no=i;
-            program_sections[no_sections].size=psec->get_size();
-            program_sections[no_sections].data=psec->get_data();
+            prg_sect[no_sect].type=SECT_DATA;
+            prg_sect[no_sect].offset=file_offset;
+            prg_sect[no_sect].section_no=i;
+            prg_sect[no_sect].size=psec->get_size();
+            prg_sect[no_sect].data=psec->get_data();
             file_offset+=psec->get_size();
             toshead.PRG_dsize+=psec->get_size();
-            no_sections++;
+            no_sect++;
         }
     }
 
@@ -195,12 +201,12 @@ int main( int argc, char** argv )
         psec = reader.sections[i];
         if (psec->get_type()==SHT_NOBITS)
         {
-            program_sections[no_sections].type=SECT_BSS;
-            program_sections[no_sections].offset=file_offset;
-            program_sections[no_sections].section_no=i;
-            program_sections[no_sections].size=psec->get_size();
+            prg_sect[no_sect].type=SECT_BSS;
+            prg_sect[no_sect].offset=file_offset;
+            prg_sect[no_sect].section_no=i;
+            prg_sect[no_sect].size=psec->get_size();
             toshead.PRG_bsize+=psec->get_size();
-            no_sections++;
+            no_sect++;
         }
     }
 
@@ -258,17 +264,22 @@ int main( int argc, char** argv )
         psec = reader.sections[i];
         if (psec->get_type()==SHT_SYMTAB)
         {
-            //program_sections[no_sections].type=SECT_BSS;
-            //program_sections[no_sections].offset=file_offset;
-            //program_sections[no_sections].section_no=i;
-            //program_sections[no_sections].reloc_needed=false;
+            //prg_sect[no_sect].type=SECT_BSS;
+            //prg_sect[no_sect].offset=file_offset;
+            //prg_sect[no_sect].section_no=i;
+            //prg_sect[no_sect].reloc_needed=false;
             //bss_size+=psec->get_size();
-            //no_sections++;
+            //no_sect++;
         }
     }
 
+    // Print some basic info
+    std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl << 
+    "Data size:" << toshead.PRG_dsize << std::endl << 
+    "BSS size:" << toshead.PRG_bsize << std::endl;
+
     // Open output file and write things
-    FILE *tosfile=fopen(argv[2],"w");
+    FILE *tosfile=fopen(argv[2],"wb");
 
     // Byte swap prg header if needed
     // TODO: take care of portability stuff.... eventually
@@ -285,20 +296,14 @@ int main( int argc, char** argv )
     fwrite(&toshead,sizeof(toshead),1,tosfile);
 
     // Write text and data sections
-    for (int i=0;i<no_sections;i++)
+    for (int i=0;i<no_sect;i++)
     {
-        if (program_sections[i].type==SECT_TEXT || program_sections[i].type==SECT_DATA)
-            fwrite(program_sections[i].data,program_sections[i].size,1,tosfile);
+        if (prg_sect[i].type==SECT_TEXT || prg_sect[i].type==SECT_DATA)
+            fwrite(prg_sect[i].data,prg_sect[i].size,1,tosfile);
     }
 
     // Done writing stuff
     fclose(tosfile);
-
-        std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl << 
-            "Data size:" << toshead.PRG_dsize << std::endl << 
-            "BSS size:" << toshead.PRG_bsize << std::endl;
-            
-
 
     return 0;
 }
