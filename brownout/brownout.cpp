@@ -30,6 +30,8 @@ THE SOFTWARE.
 #include <iostream>
 #include <elfio/elfio_dump.hpp>
 #include <elfio/elfio.hpp>
+#include <stdio.h>
+#include <stdlib.h>
 
 // M68k defines lifted from bintools 2.27.
 // Added here instead of elftypes.hpp so the
@@ -84,8 +86,8 @@ using namespace ELFIO;
 
 int main( int argc, char** argv )
 {
-    if ( argc != 2 ) {
-        printf( "Usage: ELFDump <file_name>\n" );
+    if ( argc != 3 && argc!=4) {
+        printf( "Usage: brownout <input_elf_file_name> <output_tos_file_name> [PRGFLAGS]\n" );
         return 1;
     }
 
@@ -105,14 +107,16 @@ int main( int argc, char** argv )
     dump::section_datas  ( std::cout, reader );
     dump::segment_datas  ( std::cout, reader );
 
-	Elf_Half sec_num=reader.sections.size();
+    Elf_Half sec_num=reader.sections.size();
 
-	typedef struct
-	{
-		int         type;
+    typedef struct
+    {
+        int         type;
         int         section_no;
-		uint32_t    offset;
-	} ST_SECTION;
+        uint32_t    offset;
+        uint32_t    size;
+        const char  *data;
+    } ST_SECTION;
 
     enum
     {
@@ -121,21 +125,35 @@ int main( int argc, char** argv )
         SECT_BSS
     };
 
+    typedef struct
+    {
+        uint16_t    PRG_magic;  // This WORD contains the magic value (0x601A). 
+        uint32_t    PRG_tsize;  // This LONG contains the size of the TEXT segment in bytes. 
+        uint32_t    PRG_dsize;  // This LONG contains the size of the DATA segment in bytes. 
+        uint32_t    PRG_bsize;  // This LONG contains the size of the BSS segment in bytes. 
+        uint32_t    PRG_ssize;  // This LONG contains the size of the symbol table in bytes. 
+        uint32_t    PRG_res1;   // This LONG is unused and is currently reserved. 
+        uint32_t    PRGFLAGS;   // This LONG contains flags which define certain process characteristics (as defined below). 
+        uint16_t    ABSFLAG;    // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
+    } PRG_HEADER;
+
+    PRG_HEADER toshead={0,0,0,0,0,0,0,0};   // Set up tos header
+    toshead.PRG_magic=0x601a;               // Mandatory
+    if (argc==4)
+        toshead.PRGFLAGS=atoi(argv[3]);
+
     uint32_t file_offset=28;        //first text section after the tos header
-	int text_size=0,
-        data_size=0,
-        bss_size=0;
     ST_SECTION program_sections[32];
     int no_sections=0;
 
-	section *psec;
+    section *psec;
 
     // TODO: refactor the following 3 loops into 1 by
     // making program_sections [32][3] and iterating once again
     // to determine offsets into file?
 
     // Group text segments and determine their position inside the output file
-	for ( int i = 0; i < sec_num; i++ )
+    for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
         if (psec->get_type()==SHT_PROGBITS &&
@@ -144,14 +162,17 @@ int main( int argc, char** argv )
             program_sections[no_sections].type=SECT_TEXT;
             program_sections[no_sections].offset=file_offset;
             program_sections[no_sections].section_no=i;
+            program_sections[no_sections].size=psec->get_size();
+            program_sections[no_sections].data=psec->get_data();
 
             file_offset+=psec->get_size();
+            toshead.PRG_tsize+=psec->get_size();
             no_sections++;
         }
     }
 
     // Group data segments and determine their position inside the output file
-	for ( int i = 0; i < sec_num; i++ )
+    for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
         if (psec->get_type()==SHT_PROGBITS &&
@@ -160,13 +181,16 @@ int main( int argc, char** argv )
             program_sections[no_sections].type=SECT_DATA;
             program_sections[no_sections].offset=file_offset;
             program_sections[no_sections].section_no=i;
+            program_sections[no_sections].size=psec->get_size();
+            program_sections[no_sections].data=psec->get_data();
             file_offset+=psec->get_size();
+            toshead.PRG_dsize+=psec->get_size();
             no_sections++;
         }
     }
 
     // Group BSS segments and determine their position inside the output file
-	for ( int i = 0; i < sec_num; i++ )
+    for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
         if (psec->get_type()==SHT_NOBITS)
@@ -174,61 +198,62 @@ int main( int argc, char** argv )
             program_sections[no_sections].type=SECT_BSS;
             program_sections[no_sections].offset=file_offset;
             program_sections[no_sections].section_no=i;
-            bss_size+=psec->get_size();
+            program_sections[no_sections].size=psec->get_size();
+            toshead.PRG_bsize+=psec->get_size();
             no_sections++;
         }
     }
 
     // Perform any relocations that may be needed
-	section *psec_reloc;
-	for ( int i = 0; i < sec_num; i++ )
+    section *psec_reloc;
+    for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
         if (psec->get_type()==SHT_RELA)
         {
-			//relocation_section_accessor(reader,psec);
-			Elf64_Addr   offset;
-			Elf64_Addr   symbolValue;
-			std::string  symbolName;
-			Elf_Word     type;
-			Elf_Sxword   addend;
-			Elf_Sxword   calcValue;
-			relocation_section_accessor relocs(reader,psec);
-			for (Elf_Xword j=0;j<psec->get_size();j++)
-			{
-				relocs.get_entry(j, offset, symbolValue, symbolName, type, addend, calcValue);
-				switch(type)
-				{
-				case R_68K_32:
-					{
-						std::cout << "yay, relocatable symbol!"<< std::endl;
-						break;
-					}
-				case R_68K_16:
-					{
-						//Everything stays nicely aligned, nothing to do here
-						break;
-					}
-				case R_68K_PC16:
-					{
-						std::cout << "Section" << i <<
-							": 16-bit relocations not allowed (apparently)" 
-							<< std::endl;
-						break;
-					}
-				default:
-					{
-						std::cout << "What the hell kind of type that? "
-							<< (int)type << "? Really?" << std::endl;
-						break;
-					}
-				}
-			}
-		}
+            //relocation_section_accessor(reader,psec);
+            Elf64_Addr   offset;
+            Elf64_Addr   symbolValue;
+            std::string  symbolName;
+            Elf_Word     type;
+            Elf_Sxword   addend;
+            Elf_Sxword   calcValue;
+            relocation_section_accessor relocs(reader,psec);
+            for (Elf_Xword j=0;j<psec->get_size();j++)
+            {
+                relocs.get_entry(j, offset, symbolValue, symbolName, type, addend, calcValue);
+                switch(type)
+                {
+                case R_68K_32:
+                    {
+                        std::cout << "yay, relocatable symbol!"<< std::endl;
+                        break;
+                    }
+                case R_68K_16:
+                    {
+                        std::cout << "Section" << i <<
+                            ": 16-bit relocations not allowed (apparently)" 
+                            << std::endl;                        
+                        break;
+                    }
+                case R_68K_PC16:
+                    {
+                        //PC relative section, no relocation needed
+                        break;
+                    }
+                default:
+                    {
+                        std::cout << "What the hell kind of type that? "
+                            << (int)type << "? Really?" << std::endl;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
-	// TODO: look into making a proper GST symbol table
-	for ( int i = 0; i < sec_num; i++ )
+    // TODO: look into making a proper GST symbol table
+    for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
         if (psec->get_type()==SHT_SYMTAB)
@@ -236,50 +261,43 @@ int main( int argc, char** argv )
             //program_sections[no_sections].type=SECT_BSS;
             //program_sections[no_sections].offset=file_offset;
             //program_sections[no_sections].section_no=i;
-			//program_sections[no_sections].reloc_needed=false;
+            //program_sections[no_sections].reloc_needed=false;
             //bss_size+=psec->get_size();
             //no_sections++;
         }
     }
 
+    // Open output file and write things
+    FILE *tosfile=fopen(argv[2],"w");
 
-	// Calculate text, data and bss sizes
-	/*for ( int i = 0; i < sec_num; ++i )
-	{
-		section* psec = reader.sections[i];
+    // Byte swap prg header if needed
+    // TODO: take care of portability stuff.... eventually
+    toshead.PRG_magic=_byteswap_ushort(toshead.PRG_magic);
+    toshead.PRG_tsize=_byteswap_ulong(toshead.PRG_tsize);
+    toshead.PRG_dsize=_byteswap_ulong(toshead.PRG_dsize);
+    toshead.PRG_bsize=_byteswap_ulong(toshead.PRG_bsize);
+    toshead.PRG_ssize=_byteswap_ulong(toshead.PRG_ssize);
+    toshead.PRG_res1=_byteswap_ulong(toshead.PRG_res1);
+    toshead.PRGFLAGS=_byteswap_ulong(toshead.PRGFLAGS);
+    toshead.ABSFLAG=_byteswap_ushort(toshead.ABSFLAG);
 
-		switch(psec->get_type())
-		{
-		case SHT_PROGBITS:
-			{
-				if (psec->get_name() ==".text")
-					text_size+=psec->get_size();
-				else if (psec->get_name()==".data")
-					data_size+=psec->get_size();
-				break;
-			}
-		case SHT_SYMTAB:
-			{
-				break;
-			}
-		case SHT_RELA:
-			{
-				break;
-			}
-		case SHT_NOBITS:
-			{
-				bss_size+=psec->get_size();
-				break;
-			}
-		default:
-			break;
-		}
-	}*/
+    // Write header
+    fwrite(&toshead,sizeof(toshead),1,tosfile);
 
-		std::cout << "Text size: " << /*hex << */ text_size << std::endl << 
-			"Data size:" << data_size << std::endl << 
-			"BSS size:" << bss_size << std::endl;
-			
+    // Write text and data sections
+    for (int i=0;i<no_sections;i++)
+    {
+        if (program_sections[i].type==SECT_TEXT || program_sections[i].type==SECT_DATA)
+            fwrite(program_sections[i].data,program_sections[i].size,1,tosfile);
+    }
+
+    // Done writing stuff
+    fclose(tosfile);
+
+        std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl << 
+            "Data size:" << toshead.PRG_dsize << std::endl << 
+            "BSS size:" << toshead.PRG_bsize << std::endl;
+            
 
 
     return 0;
