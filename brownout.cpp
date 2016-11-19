@@ -18,7 +18,7 @@ the WTFPL. Probably.
 #define ELFIO_NO_INTTYPES
 // Yes yes dear, fopen is insecure, blah blah. We know.
 // Don't bug us about it.
-#define CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
 // Let's make sure struct members are aligned to 2 bytes.
 // I wouldn't have put this here unless I got bit by this nonsense.
 #pragma pack(2)
@@ -159,11 +159,11 @@ int main( int argc, char** argv )
             prg_sect[no_sect].type=SECT_TEXT;
             prg_sect[no_sect].offset=file_offset;
             prg_sect[no_sect].section_no=i;
-            prg_sect[no_sect].size=psec->get_size();
-            prg_sect[no_sect].data=psec->get_data();
+            prg_sect[no_sect].size=(uint32_t)psec->get_size();
+            prg_sect[no_sect].data=(const char *)psec->get_data();
 
-            file_offset+=psec->get_size();
-            toshead.PRG_tsize+=psec->get_size();
+            file_offset+=(uint32_t)psec->get_size();
+            toshead.PRG_tsize+=(uint32_t)psec->get_size();
             no_sect++;
         }
     }
@@ -178,10 +178,10 @@ int main( int argc, char** argv )
             prg_sect[no_sect].type=SECT_DATA;
             prg_sect[no_sect].offset=file_offset;
             prg_sect[no_sect].section_no=i;
-            prg_sect[no_sect].size=psec->get_size();
-            prg_sect[no_sect].data=psec->get_data();
-            file_offset+=psec->get_size();
-            toshead.PRG_dsize+=psec->get_size();
+            prg_sect[no_sect].size=(uint32_t)psec->get_size();
+            prg_sect[no_sect].data=(const char *)psec->get_data();
+            file_offset+=(uint32_t)psec->get_size();
+            toshead.PRG_dsize+=(uint32_t)psec->get_size();
             no_sect++;
         }
     }
@@ -195,14 +195,14 @@ int main( int argc, char** argv )
             prg_sect[no_sect].type=SECT_BSS;
             prg_sect[no_sect].offset=file_offset;
             prg_sect[no_sect].section_no=i;
-            prg_sect[no_sect].size=psec->get_size();
-            toshead.PRG_bsize+=psec->get_size();
+            prg_sect[no_sect].size=(uint32_t)psec->get_size();
+            toshead.PRG_bsize+=(uint32_t)psec->get_size();
             no_sect++;
         }
     }
 
     // Perform any relocations that may be needed
-    section *psec_reloc;
+    //section *psec_reloc;
     for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
