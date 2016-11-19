@@ -5,8 +5,9 @@ brownout - A humble .elf to ST .prg binary converter
 Written by George Nakos and Douglas Litte.
 
 Uses the elfio library by Serge Lamikhov-Center to do the
-heavy lifting that is ELF parsing. See elfio.hpp for its
-license.
+heavy lifting that is ELF parsing. Also used elfdump.cpp
+from the examples folder as the basis for this source.
+See elfio.hpp for its license.
 
 Everything apart from elfio library is released under
 the WTFPL. Probably.
@@ -100,9 +101,11 @@ int main( int argc, char** argv )
     dump::segment_headers( std::cout, reader );
     dump::symbol_tables  ( std::cout, reader );
     dump::notes          ( std::cout, reader );
-    dump::dynamic_tags   ( std::cout, reader );
+    //dump::dynamic_tags   ( std::cout, reader );
     //dump::section_datas  ( std::cout, reader );
     //dump::segment_datas  ( std::cout, reader );
+
+    // 
 
     Elf_Half sec_num=reader.sections.size();
 
@@ -134,13 +137,23 @@ int main( int argc, char** argv )
         uint16_t    ABSFLAG;    // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
     } PRG_HEADER;
 
-    PRG_HEADER toshead={0,0,0,0,0,0,0,0};   // Set up tos header
+    typedef struct
+    {
+        uint32_t offset_fixup;  // Offset inside the section
+        int section;            // Which section we're on
+    } TOS_RELOC;
+
+    PRG_HEADER toshead={0,0,0,0,0,0,0,0};   // Set up TOS header
     toshead.PRG_magic=0x601a;               // Mandatory
     if (argc==4)
         toshead.PRGFLAGS=atoi(argv[3]);
 
-    uint32_t file_offset=28;        //first text section after the tos header
-    ST_SECTION prg_sect[32];
+    TOS_RELOC tos_relocs[10*1024];  // Enough? Who knows!
+    int no_relocs=0;
+
+    uint32_t file_offset=28;        // first text section after the tos header
+    ST_SECTION prg_sect[32];        // Enough? Who knows!
+    int section_map[32];            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
     int no_sect=0;
 
     section *psec;
@@ -164,6 +177,7 @@ int main( int argc, char** argv )
 
             file_offset+=(uint32_t)psec->get_size();
             toshead.PRG_tsize+=(uint32_t)psec->get_size();
+            section_map[i]=no_sect;         // Mark where in prg_sect this section will lie
             no_sect++;
         }
     }
@@ -182,6 +196,7 @@ int main( int argc, char** argv )
             prg_sect[no_sect].data=(const char *)psec->get_data();
             file_offset+=(uint32_t)psec->get_size();
             toshead.PRG_dsize+=(uint32_t)psec->get_size();
+            section_map[i]=no_sect;         // Mark where in prg_sect this section will lie
             no_sect++;
         }
     }
@@ -206,9 +221,9 @@ int main( int argc, char** argv )
     for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
-        std::string sectname=psec->get_name();
-        int test1=sectname.find(".text");
-        int test2=sectname.find(".data");
+        std::string sectname=psec->get_name();  // Debug
+        int test1=sectname.find(".text");   // Check if this is a text relocation segment
+        int test2=sectname.find(".data");   // Check if this is a data relocation segment
         if (psec->get_type()==SHT_RELA && (test1>0 || test2>0))
         {
             Elf64_Addr   offset;
@@ -225,18 +240,21 @@ int main( int argc, char** argv )
             for (Elf_Xword j=0;j<sec_size;j++)
             {
                 relocs.get_entry(j, offset, symbolValue, symbolName, type, addend, calcValue);
-                Elf_Word symbol;
-                relocs.generic_get_entry_rela(j,offset,symbol,type,addend);
                 //Elf_Word symbol;
-                //relocs.generic_get_entry_rela((Elf_Xword)j,offset,symbol,type,addend);
-                
-                //relocs.  Elf32_Rela *rel_symbol;
-                //int zzz=relocs.get_entries_num();
                 switch(type)
                 {
                 case R_68K_32:
                     {
-                        std::cout << "Relocatable symbol " << j << " at section "<< i << std::endl;
+                        std::cout << "Relocatable symbol " << j << " at section "<< i 
+                            << " at offset " << offset << std::endl;
+                        // TODO: Ok, we need to mark which section this relocation
+                        // is refering to. For now we're going to blindly assume that it
+                        // refers to the previous one as they usually go in pairs
+                        // (.text / .rela.text). If this is bad then well, this is what
+                        // to change!
+                        tos_relocs[no_relocs].section=section_map[i-1];
+                        tos_relocs[no_relocs].offset_fixup=(uint32_t)offset;
+                        no_relocs++;
                         break;
                     }
                 case R_68K_16:
@@ -285,30 +303,79 @@ int main( int argc, char** argv )
     // Open output file and write things
     FILE *tosfile=fopen(argv[2],"wb");
 
+ 
     // Byte swap prg header if needed
     // TODO: take care of portability stuff.... eventually
-    toshead.PRG_magic=_byteswap_ushort(toshead.PRG_magic);
-    toshead.PRG_tsize=_byteswap_ulong(toshead.PRG_tsize);
-    toshead.PRG_dsize=_byteswap_ulong(toshead.PRG_dsize);
-    toshead.PRG_bsize=_byteswap_ulong(toshead.PRG_bsize);
-    toshead.PRG_ssize=_byteswap_ulong(toshead.PRG_ssize);
-    toshead.PRG_res1=_byteswap_ulong(toshead.PRG_res1);
-    toshead.PRGFLAGS=_byteswap_ulong(toshead.PRGFLAGS);
-    toshead.ABSFLAG=_byteswap_ushort(toshead.ABSFLAG);
+    PRG_HEADER writehead;
+    writehead.PRG_magic=_byteswap_ushort(toshead.PRG_magic);
+    writehead.PRG_tsize=_byteswap_ulong(toshead.PRG_tsize);
+    writehead.PRG_dsize=_byteswap_ulong(toshead.PRG_dsize);
+    writehead.PRG_bsize=_byteswap_ulong(toshead.PRG_bsize);
+    writehead.PRG_ssize=_byteswap_ulong(toshead.PRG_ssize);
+    writehead.PRG_res1=_byteswap_ulong(toshead.PRG_res1);
+    writehead.PRGFLAGS=_byteswap_ulong(toshead.PRGFLAGS);
+    writehead.ABSFLAG=_byteswap_ushort(toshead.ABSFLAG);
 
     // Write header
-    fwrite(&toshead,sizeof(toshead),1,tosfile);
+    fwrite(&writehead,sizeof(writehead),1,tosfile);
 
     // Write text and data sections
     for (int i=0;i<no_sect;i++)
     {
         if (prg_sect[i].type==SECT_TEXT || prg_sect[i].type==SECT_DATA)
+        {
             fwrite(prg_sect[i].data,prg_sect[i].size,1,tosfile);
+            file_offset+=prg_sect[i].size;
+
+        }
         // TODO: Add padding after sections?
         // TODO2: For 030 executables pad sections to 4 bytes?
         // TODO3: For 030 executables, insert a nop at the start of the first
         //        text segment so the start of the code is aligned to 4 bytes?
         //        (TOS 4 aligns mallocs to 4 bytes but the header is 28 bytes)
+    }
+
+    // TODO: write symbol table
+    if (toshead.PRG_ssize!=0)
+    {
+    }
+
+    // Write relocation table
+    if (no_relocs>0)
+    {
+        uint32_t current_reloc;
+        uint32_t next_reloc;
+        uint32_t diff;
+        uint8_t temp;
+        uint32_t temp_byteswap;
+        // Handle first relocation separately as 
+        // the offset needs to be a longword.
+        current_reloc=tos_relocs[0].offset_fixup+prg_sect[tos_relocs[0].section].offset-28;
+        temp_byteswap=_byteswap_ulong(current_reloc);
+        fwrite(&temp_byteswap,4,1,tosfile);
+        for (int i=1;i<no_relocs;i++)
+        {
+            next_reloc=tos_relocs[i].offset_fixup+prg_sect[tos_relocs[i].section].offset-28;
+            diff=next_reloc-current_reloc;
+            while (diff>254)
+            {
+                temp=1;
+                fwrite(&temp,1,1,tosfile);
+                diff-=254;
+            }
+            temp=diff;
+            fwrite(&temp,1,1,tosfile);
+            current_reloc=next_reloc;
+        }
+        // Finally, write a 0 to terminate the symbol table
+        temp=0;
+        fwrite(&temp,1,1,tosfile);
+    }
+    else
+    {
+        // Write a null longword to express list termination
+        // (as suggested by the Atari Compendium chapter 2)
+        fwrite(&no_relocs,4,1,tosfile);
     }
 
     // Done writing stuff
