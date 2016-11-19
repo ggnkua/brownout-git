@@ -101,8 +101,8 @@ int main( int argc, char** argv )
     dump::symbol_tables  ( std::cout, reader );
     dump::notes          ( std::cout, reader );
     dump::dynamic_tags   ( std::cout, reader );
-    dump::section_datas  ( std::cout, reader );
-    dump::segment_datas  ( std::cout, reader );
+    //dump::section_datas  ( std::cout, reader );
+    //dump::segment_datas  ( std::cout, reader );
 
     Elf_Half sec_num=reader.sections.size();
 
@@ -206,9 +206,11 @@ int main( int argc, char** argv )
     for ( int i = 0; i < sec_num; i++ )
     {
         psec = reader.sections[i];
-        if (psec->get_type()==SHT_RELA)
+        std::string sectname=psec->get_name();
+        int test1=sectname.find(".text");
+        int test2=sectname.find(".data");
+        if (psec->get_type()==SHT_RELA && (test1>0 || test2>0))
         {
-            //relocation_section_accessor(reader,psec);
             Elf64_Addr   offset;
             Elf64_Addr   symbolValue;
             std::string  symbolName;
@@ -216,14 +218,25 @@ int main( int argc, char** argv )
             Elf_Sxword   addend;
             Elf_Sxword   calcValue;
             relocation_section_accessor relocs(reader,psec);
-            for (Elf_Xword j=0;j<psec->get_size();j++)
+            // r_offset, r_info&$ff, r_info>>8, r_addend
+            // [(2, 1, 22, 0), (66, 1, 3, 0)]
+            //int sec_size=(int)psec->get_size()/sizeof(Elf32_Rela);  //Number of entries in the table
+            int sec_size=(int)relocs.get_entries_num();  //Number of entries in the table
+            for (Elf_Xword j=0;j<sec_size;j++)
             {
                 relocs.get_entry(j, offset, symbolValue, symbolName, type, addend, calcValue);
+                Elf_Word symbol;
+                relocs.generic_get_entry_rela(j,offset,symbol,type,addend);
+                //Elf_Word symbol;
+                //relocs.generic_get_entry_rela((Elf_Xword)j,offset,symbol,type,addend);
+                
+                //relocs.  Elf32_Rela *rel_symbol;
+                //int zzz=relocs.get_entries_num();
                 switch(type)
                 {
                 case R_68K_32:
                     {
-                        std::cout << "yay, relocatable symbol!"<< std::endl;
+                        std::cout << "Relocatable symbol " << j << " at section "<< i << std::endl;
                         break;
                     }
                 case R_68K_16:
@@ -291,6 +304,11 @@ int main( int argc, char** argv )
     {
         if (prg_sect[i].type==SECT_TEXT || prg_sect[i].type==SECT_DATA)
             fwrite(prg_sect[i].data,prg_sect[i].size,1,tosfile);
+        // TODO: Add padding after sections?
+        // TODO2: For 030 executables pad sections to 4 bytes?
+        // TODO3: For 030 executables, insert a nop at the start of the first
+        //        text segment so the start of the code is aligned to 4 bytes?
+        //        (TOS 4 aligns mallocs to 4 bytes but the header is 28 bytes)
     }
 
     // Done writing stuff
