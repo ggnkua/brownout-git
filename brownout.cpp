@@ -32,9 +32,19 @@ the WTFPL. Probably.
 #include <elfio/elfio_dump.hpp>
 #include <elfio/elfio.hpp>
 #include <stdio.h>
-#include <stdlib.h>
 #include <SimpleOpt.h>
 
+// Little endian to big endian conversion depending on platform
+#if defined(__linux__)
+    #include <endian.h>
+    #define BYTESWAP32 htobe32
+    #define BYTESWAP16 htobe16
+#endif
+#ifdef _MSC_VER
+    #include <stdlib.h>
+    #define BYTESWAP32 _byteswap_ushort
+    #define BYTESWAP16 _byteswap_ulong
+#endif
 
 // M68k defines lifted from bintools 2.27.
 // Added here instead of elftypes.hpp so the
@@ -467,14 +477,14 @@ Table 3-1 describes the fields of a symbol table entry.
     // Byte swap prg header if needed
     // TODO: take care of portability stuff.... eventually
     PRG_HEADER writehead;
-    writehead.PRG_magic = _byteswap_ushort(toshead.PRG_magic);
-    writehead.PRG_tsize = _byteswap_ulong(toshead.PRG_tsize);
-    writehead.PRG_dsize = _byteswap_ulong(toshead.PRG_dsize);
-    writehead.PRG_bsize = _byteswap_ulong(toshead.PRG_bsize);
-    writehead.PRG_ssize = _byteswap_ulong(toshead.PRG_ssize);
-    writehead.PRG_res1 = _byteswap_ulong(toshead.PRG_res1);
-    writehead.PRGFLAGS = _byteswap_ulong(toshead.PRGFLAGS);
-    writehead.ABSFLAG = _byteswap_ushort(toshead.ABSFLAG);
+    writehead.PRG_magic = BYTESWAP16(toshead.PRG_magic);
+    writehead.PRG_tsize = BYTESWAP32(toshead.PRG_tsize);
+    writehead.PRG_dsize = BYTESWAP32(toshead.PRG_dsize);
+    writehead.PRG_bsize = BYTESWAP32(toshead.PRG_bsize);
+    writehead.PRG_ssize = BYTESWAP32(toshead.PRG_ssize);
+    writehead.PRG_res1 = BYTESWAP32(toshead.PRG_res1);
+    writehead.PRGFLAGS = BYTESWAP32(toshead.PRGFLAGS);
+    writehead.ABSFLAG = BYTESWAP16(toshead.ABSFLAG);
 
     // Write header
     fwrite(&writehead, sizeof(writehead), 1, tosfile);
@@ -511,7 +521,7 @@ Table 3-1 describes the fields of a symbol table entry.
         // Handle first relocation separately as
         // the offset needs to be a longword.
         current_reloc = tos_relocs[0].offset_fixup + prg_sect[tos_relocs[0].section].offset - 28;
-        temp_byteswap = _byteswap_ulong(current_reloc);
+        temp_byteswap = BYTESWAP32(current_reloc);
         fwrite(&temp_byteswap, 4, 1, tosfile);
         for (int i = 1; i < no_relocs; i++)
         {
