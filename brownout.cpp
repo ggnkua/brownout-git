@@ -42,8 +42,8 @@ the WTFPL. Probably.
 #endif
 #ifdef _MSC_VER
     #include <stdlib.h>
-    #define BYTESWAP32 _byteswap_ushort
-    #define BYTESWAP16 _byteswap_ulong
+    #define BYTESWAP16 _byteswap_ushort
+    #define BYTESWAP32 _byteswap_ulong
 #endif
 
 // M68k defines lifted from bintools 2.27.
@@ -105,7 +105,7 @@ the WTFPL. Probably.
 # define _tmain		main
 #endif
 
-enum 
+enum
 {
     OPT_INFILE,
     OPT_OUTFILE,
@@ -123,7 +123,8 @@ enum
     OPT_DEBUG
 };
 
-CSimpleOpt::SOption g_rgOptions[] = {
+CSimpleOpt::SOption g_rgOptions[] =
+{
     { OPT_INFILE,               _T("-i"),     SO_REQ_SEP },
     { OPT_OUTFILE,              _T("-o"),     SO_REQ_SEP },
     { OPT_PRGFLAGS,             _T("-p"),     SO_REQ_SEP },
@@ -133,22 +134,30 @@ CSimpleOpt::SOption g_rgOptions[] = {
     SO_END_OF_OPTIONS                       // END
 };
 
-    typedef struct
-    {
-        uint16_t    PRG_magic;  // This WORD contains the magic value (0x601A).
-        uint32_t    PRG_tsize;  // This LONG contains the size of the TEXT segment in bytes.
-        uint32_t    PRG_dsize;  // This LONG contains the size of the DATA segment in bytes.
-        uint32_t    PRG_bsize;  // This LONG contains the size of the BSS segment in bytes.
-        uint32_t    PRG_ssize;  // This LONG contains the size of the symbol table in bytes.
-        uint32_t    PRG_res1;   // This LONG is unused and is currently reserved.
-        uint32_t    PRGFLAGS;   // This LONG contains flags which define certain process characteristics (as defined below).
-        uint16_t    ABSFLAG;    // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
-    } PRG_HEADER;
+typedef struct
+{
+    uint16_t    PRG_magic;  // This WORD contains the magic value (0x601A).
+    uint32_t    PRG_tsize;  // This LONG contains the size of the TEXT segment in bytes.
+    uint32_t    PRG_dsize;  // This LONG contains the size of the DATA segment in bytes.
+    uint32_t    PRG_bsize;  // This LONG contains the size of the BSS segment in bytes.
+    uint32_t    PRG_ssize;  // This LONG contains the size of the symbol table in bytes.
+    uint32_t    PRG_res1;   // This LONG is unused and is currently reserved.
+    uint32_t    PRGFLAGS;   // This LONG contains flags which define certain process characteristics (as defined below).
+    uint16_t    ABSFLAG;    // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
+} PRG_HEADER;
 
 
 using namespace ELFIO;
 
-int _tmain(int argc, TCHAR * argv[]) {
+void printhelp()
+{
+    printf( "Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d]\n"
+            "-s will create a symbol table\n"
+            "-d will turn on verbose debugging.\n");
+}
+
+int _tmain(int argc, TCHAR * argv[])
+{
 
     PRG_HEADER toshead = {0, 0, 0, 0, 0, 0, 0, 0};  // Set up TOS header
 
@@ -163,49 +172,61 @@ int _tmain(int argc, TCHAR * argv[]) {
     CSimpleOpt args(argc, argv, g_rgOptions);
     char infile[1024];
     char outfile[1024];
-    bool DEBUG=false;
-    bool SYMTABLE=false;
+    bool DEBUG = false;
+    bool SYMTABLE = false;
+
+    bool gotinput = false, gotoutput = false;
 
     // while there are arguments left to process
-    while (args.Next()) {
-        if (args.LastError() == SO_SUCCESS) {
-            if (args.OptionId() == OPT_HELP) {
-                printf( "Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d]\n"
-                    "-s will create a symbol table\n"
-                    "-d will turn on verbose debugging.\n");
+    while (args.Next())
+    {
+        if (args.LastError() == SO_SUCCESS)
+        {
+            if (args.OptionId() == OPT_HELP)
+            {
+                printhelp();
                 return 0;
             }
             //_tprintf(_T("Option, ID: %d, Text: '%s', Argument: '%s'\n"),
             //    args.OptionId(), args.OptionText(),
             //    args.OptionArg() ? args.OptionArg() : _T(""));
-            else if (args.OptionId()==OPT_INFILE)
+            else if (args.OptionId() == OPT_INFILE)
             {
                 std::string s_arg = (std::string)args.OptionArg();
-                strcpy(infile,s_arg.c_str());
+                strcpy(infile, s_arg.c_str());
+                gotinput = true;
             }
-            else if (args.OptionId()==OPT_OUTFILE)
+            else if (args.OptionId() == OPT_OUTFILE)
             {
                 std::string s_arg = (std::string)args.OptionArg();
-                strcpy(outfile,s_arg.c_str());
+                strcpy(outfile, s_arg.c_str());
+                gotoutput = true;
             }
-            else if (args.OptionId()==OPT_PRGFLAGS)
+            else if (args.OptionId() == OPT_PRGFLAGS)
             {
                 std::string s_arg = (std::string)args.OptionArg();
                 toshead.PRGFLAGS = atoi(s_arg.c_str());
             }
-            else if (args.OptionId()==OPT_DEBUG)
+            else if (args.OptionId() == OPT_DEBUG)
             {
-                DEBUG=true;
+                DEBUG = true;
             }
-            else if (args.OptionId()==OPT_SYMTABLE)
+            else if (args.OptionId() == OPT_SYMTABLE)
             {
-                SYMTABLE=true;
+                SYMTABLE = true;
             }
         }
-        else {
+        else
+        {
             _tprintf(_T("Invalid argument: %s\n"), args.OptionText());
             return 1;
         }
+    }
+
+    if ((gotinput & gotoutput) == false)
+    {
+        printhelp();
+        return 1;
     }
 
     elfio reader;
@@ -352,8 +373,8 @@ int _tmain(int argc, TCHAR * argv[]) {
                 {
                     if (DEBUG)
                     {
-                    std::cout << "Relocatable symbol " << j << " at section " << i
-                              << " at offset " << offset << std::endl;
+                        std::cout << "Relocatable symbol " << j << " at section " << i
+                                  << " at offset " << offset << std::endl;
                     }
                     // TODO: Ok, we need to mark which section this relocation
                     // is refering to. For now we're going to blindly assume that it
@@ -391,13 +412,13 @@ int _tmain(int argc, TCHAR * argv[]) {
     // TODO: look into making a proper GST symbol table
 
     /*
-SYMBOL TABLE
-------------
-The  symbol  table  defines the symbols referenced by a command file.  Each
-entry in the symbol table is associated with an index  that  indicates  its
-entry  number.    Entries are numbered sequentially starting with zero.  As
-shown in Figure 3-3, each symbol table entry is  composed  of  seven  words
-that describe the symbol's name, type, and value.
+    SYMBOL TABLE
+    ------------
+    The  symbol  table  defines the symbols referenced by a command file.  Each
+    entry in the symbol table is associated with an index  that  indicates  its
+    entry  number.    Entries are numbered sequentially starting with zero.  As
+    shown in Figure 3-3, each symbol table entry is  composed  of  seven  words
+    that describe the symbol's name, type, and value.
 
 
                              +--------+--------+
@@ -419,19 +440,19 @@ that describe the symbol's name, type, and value.
                       Figure 3-3.  Symbol Table Entry
 
 
-Table 3-1 describes the fields of a symbol table entry.
+    Table 3-1 describes the fields of a symbol table entry.
 
 
 
                    Table 3-1.  Symbol Table Entry Fields
 
-   Field     Definition 
+    Field     Definition
 
 
-   Name      Symbol   name,   null-padded   right  if  less  than  eight
+    Name      Symbol   name,   null-padded   right  if  less  than  eight
              characters.
 
-   Type      Symbol type as indicated by the following values:
+    Type      Symbol type as indicated by the following values:
 
              0100H:  bss-based relocatable
              0200H:  text-based relocatable
@@ -443,26 +464,26 @@ Table 3-1 describes the fields of a symbol table entry.
              8000H:  defined
 
 
-   Value     Symbol value where the value can be  an  address,  register
+    Value     Symbol value where the value can be  an  address,  register
              number, value of an _expression_, and so forth. Note that the
              linkers interpret the value when  the  symbol  is  external
-             (0800H) as the size of a common region.  
-*/
+             (0800H) as the size of a common region.
+    */
 
     if (SYMTABLE)
     {
-    for ( int i = 0; i < sec_num; i++ )
-    {
-        psec = reader.sections[i];
-        if (psec->get_type() == SHT_SYMTAB)
+        for ( int i = 0; i < sec_num; i++ )
         {
-            //prg_sect[no_sect].type=SECT_BSS;
-            //prg_sect[no_sect].offset=file_offset;
-            //prg_sect[no_sect].reloc_needed=false;
-            //bss_size+=psec->get_size();
-            //no_sect++;
+            psec = reader.sections[i];
+            if (psec->get_type() == SHT_SYMTAB)
+            {
+                //prg_sect[no_sect].type=SECT_BSS;
+                //prg_sect[no_sect].offset=file_offset;
+                //prg_sect[no_sect].reloc_needed=false;
+                //bss_size+=psec->get_size();
+                //no_sect++;
+            }
         }
-    }
     }
 
     // Print some basic info
@@ -553,4 +574,5 @@ Table 3-1 describes the fields of a symbol table entry.
 
     return 0;
 }
+
 
