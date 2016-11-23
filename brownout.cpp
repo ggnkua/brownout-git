@@ -28,11 +28,13 @@ the WTFPL. Probably.
 #pragma pack(2)
 #endif
 
+#include <assert.h>
 #include <iostream>
 #include <elfio/elfio_dump.hpp>
 #include <elfio/elfio.hpp>
 #include <stdio.h>
 #include <SimpleOpt.h>
+#include <map>
 
 // Little endian to big endian conversion depending on platform
 #if defined(__linux__)
@@ -279,13 +281,16 @@ int _tmain(int argc, TCHAR * argv[])
     //if (argc == 4)
     //    toshead.PRGFLAGS = atoi(argv[3]);           // Set PRGFLAGS
 
-    TOS_RELOC tos_relocs[10 * 1024];                // Enough? Who knows!
+    TOS_RELOC tos_relocs[100 * 1024];                // Enough? Who knows!
     int no_relocs = 0;
 
     uint32_t file_offset = 28;                      // first text section after the tos header
     ST_SECTION prg_sect[32];                        // Enough? Who knows!
     int section_map[32];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
     int no_sect = 0;
+
+	for (int i = 0; i < 32; i++)
+		section_map[i] = -1;
 
     section *psec;
 
@@ -374,13 +379,15 @@ int _tmain(int argc, TCHAR * argv[])
                     if (DEBUG)
                     {
                         std::cout << "Relocatable symbol " << j << " at section " << i
-                                  << " at offset " << offset << std::endl;
+                                  << " [" << psec->get_name() << "] at offset " << offset << " addend " << addend<< std::endl;
                     }
                     // TODO: Ok, we need to mark which section this relocation
                     // is refering to. For now we're going to blindly assume that it
                     // refers to the previous one as they usually go in pairs
                     // (.text / .rela.text). If this is bad then well, this is what
                     // to change!
+					assert(i >= 0);
+					assert(section_map[i - 1] >= 0);
                     tos_relocs[no_relocs].section = section_map[i - 1];
                     tos_relocs[no_relocs].offset_fixup = (uint32_t)offset;
                     no_relocs++;
@@ -531,34 +538,62 @@ int _tmain(int argc, TCHAR * argv[])
     {
     }
 
+	// shove all reloc indices in a map, using the address as the sort key
+	// (equivalent to a tree-insert-sort)
+	typedef std::map<uint32_t, int> relocmap_t;
+	relocmap_t relocmap;
+	for (int r = 0; r < no_relocs; r++)
+	{
+		// compute reloc address
+		uint32_t addr = tos_relocs[r].offset_fixup + prg_sect[tos_relocs[r].section].offset - 28;
+
+		// make sure only one reloc for each address!
+		assert(relocmap.find(addr) == relocmap.end());
+
+		// index of this reloc address
+		relocmap[addr] = r;
+	}
+
     // Write relocation table
-    if (no_relocs > 0)
+	if (no_relocs > 0)
     {
-        uint32_t current_reloc;
-        uint32_t next_reloc;
-        uint32_t diff;
-        uint8_t temp;
-        uint32_t temp_byteswap;
-        // Handle first relocation separately as
-        // the offset needs to be a longword.
-        current_reloc = tos_relocs[0].offset_fixup + prg_sect[tos_relocs[0].section].offset - 28;
-        temp_byteswap = BYTESWAP32(current_reloc);
-        fwrite(&temp_byteswap, 4, 1, tosfile);
-        for (int i = 1; i < no_relocs; i++)
-        {
-            next_reloc = tos_relocs[i].offset_fixup + prg_sect[tos_relocs[i].section].offset - 28;
-            diff = next_reloc - current_reloc;
-            while (diff > 254)
-            {
-                temp = 1;
-                fwrite(&temp, 1, 1, tosfile);
-                diff -= 254;
-            }
-            temp = diff;
-            fwrite(&temp, 1, 1, tosfile);
-            current_reloc = next_reloc;
-        }
-        // Finally, write a 0 to terminate the symbol table
+		// sorted map of reloc indices
+		relocmap_t::iterator it = relocmap.begin();
+
+		// get first address-sorted reloc index
+		int ri = it->second; it++;
+
+		uint32_t current_reloc;
+		uint32_t next_reloc;
+		uint32_t diff;
+		uint8_t temp;
+		uint32_t temp_byteswap;
+		// Handle first relocation separately as
+		// the offset needs to be a longword.
+				
+
+		current_reloc = tos_relocs[ri].offset_fixup + prg_sect[tos_relocs[ri].section].offset - 28;
+		temp_byteswap = BYTESWAP32(current_reloc);
+		fwrite(&temp_byteswap, 4, 1, tosfile);
+		for (int i = 1; i < no_relocs; i++)
+		{
+			// get next address-sorted reloc index
+			int ri = it->second; it++;
+
+			next_reloc = tos_relocs[ri].offset_fixup + prg_sect[tos_relocs[ri].section].offset - 28;
+			diff = next_reloc - current_reloc;
+			while (diff > 254)
+			{
+				temp = 1;
+				fwrite(&temp, 1, 1, tosfile);
+				diff -= 254;
+			}
+			temp = diff;
+			fwrite(&temp, 1, 1, tosfile);
+			current_reloc = next_reloc;
+		}
+
+		// Finally, write a 0 to terminate the symbol table
         temp = 0;
         fwrite(&temp, 1, 1, tosfile);
     }
