@@ -20,11 +20,15 @@ the WTFPL. Probably.
 #ifdef _MSC_VER
 #define _SCL_SECURE_NO_WARNINGS
 #define ELFIO_NO_INTTYPES
+
+//#include <stdio.h>
+
 // Yes yes dear, fopen is insecure, blah blah. We know.
 // Don't bug us about it.
 #define _CRT_SECURE_NO_WARNINGS
+
 // Let's make sure struct members are aligned to 2 bytes.
-// I wouldn't have put this here unless I got bit by this nonsense.
+// I wouldn't have put this here if I didn't get bit by this nonsense.
 #pragma pack(2)
 #endif
 
@@ -32,7 +36,6 @@ the WTFPL. Probably.
 #include <iostream>
 #include <elfio/elfio_dump.hpp>
 #include <elfio/elfio.hpp>
-#include <stdio.h>
 #include <SimpleOpt.h>
 #include <map>
 
@@ -376,7 +379,7 @@ int _tmain(int argc, TCHAR * argv[])
                 {
                 case R_68K_32:
                 {
-                    if (DEBUG)
+                    if (0)
                     {
                         std::cout << "Relocatable symbol " << j << " at section " << i
                                   << " [" << psec->get_name() << "] at offset " << offset << " addend " << addend<< std::endl;
@@ -477,13 +480,70 @@ int _tmain(int argc, TCHAR * argv[])
              (0800H) as the size of a common region.
     */
 
+    typedef struct
+    {
+        char name[8];
+        uint16_t type;
+        uint32_t value;
+    } GST_SYMBOL;
+
+    GST_SYMBOL symtab[100*1024];    // Enough? Who knows!
+    int no_sym=0;
+
     if (SYMTABLE)
     {
         for ( int i = 0; i < sec_num; i++ )
         {
             psec = reader.sections[i];
-            if (psec->get_type() == SHT_SYMTAB)
+            if (psec->get_type() == SHT_SYMTAB /* || psec->get_type() == SHT_DYNSYM */)
             {
+                symbol_section_accessor symbols( reader, psec );
+
+                Elf_Xword     sym_no = symbols.get_symbols_num();
+
+                if ( sym_no > 0 ) {
+                    
+                    for ( Elf_Half i = 0; i < sym_no; ++i ) {
+                        std::string   name;
+                        Elf64_Addr    value   = 0;
+                        Elf_Xword     size    = 0;
+                        unsigned char bind    = 0;
+                        unsigned char type    = 0;
+                        Elf_Half      section = 0;
+                        unsigned char other   = 0;
+                        symbols.get_symbol( i, name, value, size, bind, type, section, other );
+                        name[7]=0;  //TODO: check everything!
+                        strcpy(symtab[no_sym].name,name.c_str());
+                        symtab[no_sym].value=value;
+                        switch (type)
+                        {
+                        case STB_LOCAL:
+                        case STB_WEAK:
+                            {
+                                //Bounds checking to see which segment it belongs
+                                symtab[no_sym].type=0x100; //TEXT
+                                symtab[no_sym].type=0x200; //DATA
+                                symtab[no_sym].type=0x300; //BSS
+                            }
+                        case STB_GLOBAL:
+                            {
+                                symtab[no_sym].type=0x2000;
+                            }
+                        case STB_LOOS:
+                        case STB_HIOS:
+                        case STB_LOPROC:
+                        case STB_HIPROC:
+                            {
+                                // Do nothing?
+                            }
+                        }
+                        no_sym++;
+
+                    }
+
+                }
+
+
                 //prg_sect[no_sect].type=SECT_BSS;
                 //prg_sect[no_sect].offset=file_offset;
                 //prg_sect[no_sect].reloc_needed=false;
@@ -491,7 +551,15 @@ int _tmain(int argc, TCHAR * argv[])
                 //no_sect++;
             }
         }
+        toshead.PRG_ssize=no_sym*14;
+        //Byte swap table and dump it
+        for (int i=0;i<no_sym;i++)
+        {
+            symtab[i].type=BYTESWAP16(symtab[i].type);
+            symtab[i].value=BYTESWAP32(symtab[i].value);
+        }
     }
+
 
     // Print some basic info
     std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl <<
@@ -536,6 +604,8 @@ int _tmain(int argc, TCHAR * argv[])
     // TODO: write symbol table
     if (toshead.PRG_ssize != 0)
     {
+        fwrite(symtab,toshead.PRG_ssize,1,tosfile);
+        file_offset+=toshead.PRG_ssize;
     }
 
 	// shove all reloc indices in a map, using the address as the sort key
