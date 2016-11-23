@@ -545,7 +545,8 @@ int _tmain(int argc, TCHAR * argv[])
 	for (int r = 0; r < no_relocs; r++)
 	{
 		// compute reloc address
-		uint32_t addr = tos_relocs[r].offset_fixup + prg_sect[tos_relocs[r].section].offset - 28;
+		//uint32_t addr = tos_relocs[r].offset_fixup + prg_sect[tos_relocs[r].section].offset - 28;
+		uint32_t addr = tos_relocs[r].offset_fixup;
 
 		// make sure only one reloc for each address!
 		assert(relocmap.find(addr) == relocmap.end());
@@ -572,7 +573,7 @@ int _tmain(int argc, TCHAR * argv[])
 		// the offset needs to be a longword.
 				
 
-		current_reloc = tos_relocs[ri].offset_fixup + prg_sect[tos_relocs[ri].section].offset - 28;
+		current_reloc = tos_relocs[ri].offset_fixup;
 		temp_byteswap = BYTESWAP32(current_reloc);
 		fwrite(&temp_byteswap, 4, 1, tosfile);
 		for (int i = 1; i < no_relocs; i++)
@@ -580,7 +581,7 @@ int _tmain(int argc, TCHAR * argv[])
 			// get next address-sorted reloc index
 			int ri = it->second; it++;
 
-			next_reloc = tos_relocs[ri].offset_fixup + prg_sect[tos_relocs[ri].section].offset - 28;
+			next_reloc = tos_relocs[ri].offset_fixup;
 			diff = next_reloc - current_reloc;
 			while (diff > 254)
 			{
