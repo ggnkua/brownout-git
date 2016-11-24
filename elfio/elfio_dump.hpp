@@ -733,7 +733,7 @@ class dump
                         Elf_Xword   value = 0;
                         std::string str;
                         dynamic.get_entry( i, tag, value, str );
-                        dynamic_tag( out, i, tag, value, str, reader.get_class() );
+                        dynamic_tag( out, (int)i, tag, value, str, reader.get_class() );
                         if ( DT_NULL == tag ) {
                             break;
                         }
