@@ -161,6 +161,42 @@ void printhelp()
             "-d will turn on verbose debugging.\n");
 }
 
+typedef struct
+{
+    uint32_t offset_fixup;                      // Offset inside the section
+    int section;                                // Which section we're on
+} TOS_RELOC;
+
+TOS_RELOC tos_relocs[100 * 1024];                // Enough? Who knows!
+
+typedef struct
+{
+    char name[8];
+    uint16_t type;
+    uint32_t value;
+} GST_SYMBOL;
+
+GST_SYMBOL symtab[100 * 1024];  // Enough? Who knows!
+
+typedef struct
+{
+    int         type;       // Type of section (see enum below)
+    uint32_t    offset;     // Offset of section inside the TOS PRG
+    uint32_t    size;       // Original size of section
+    uint32_t    padded_size;    // Size of section with even padding
+    const char  *data;      // Points to the start of the actual section data
+    uint32_t    sect_start; // address of section start inside the elf
+    uint32_t    sect_end;   // address of section end inside the elf
+} ST_SECTION;
+
+enum
+{
+    SECT_TEXT,
+    SECT_DATA,
+    SECT_BSS
+};
+
+
 int _tmain(int argc, TCHAR * argv[])
 {
 
@@ -258,42 +294,20 @@ int _tmain(int argc, TCHAR * argv[])
 
     Elf_Half sec_num = reader.sections.size();
 
-    typedef struct
-    {
-        int         type;       // Type of section (see enum below)
-        uint32_t    offset;     // Offset of section inside the TOS PRG
-        uint32_t    size;       // Size of section
-        const char  *data;      // Points to the start of the actual section data
-    } ST_SECTION;
-
-    enum
-    {
-        SECT_TEXT,
-        SECT_DATA,
-        SECT_BSS
-    };
-
-    typedef struct
-    {
-        uint32_t offset_fixup;                      // Offset inside the section
-        int section;                                // Which section we're on
-    } TOS_RELOC;
-
     toshead.PRG_magic = 0x601a;                     // MandatoryA
 
     //if (argc == 4)
     //    toshead.PRGFLAGS = atoi(argv[3]);           // Set PRGFLAGS
 
-    TOS_RELOC tos_relocs[100 * 1024];                // Enough? Who knows!
     int no_relocs = 0;
 
-    uint32_t file_offset = 28;                      // first text section after the tos header
+    uint32_t file_offset = 28;                      // Mostly used to calculate the offset of the BSS section inside the .prg
     ST_SECTION prg_sect[32];                        // Enough? Who knows!
     int section_map[32];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
     int no_sect = 0;
 
-	for (int i = 0; i < 32; i++)
-		section_map[i] = -1;
+    for (int i = 0; i < 32; i++)
+        section_map[i] = -1;
 
     section *psec;
 
@@ -311,10 +325,12 @@ int _tmain(int argc, TCHAR * argv[])
             prg_sect[no_sect].type = SECT_TEXT;
             prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
             prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
+            prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
             prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
-
-            file_offset += (uint32_t)psec->get_size();                  // Update prg offset
-            toshead.PRG_tsize += (uint32_t)psec->get_size();            // Update prg text size
+            prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
+            prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
+            file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
+            toshead.PRG_tsize += prg_sect[no_sect].padded_size;         // Update prg text size
             section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
             no_sect++;
         }
@@ -330,9 +346,12 @@ int _tmain(int argc, TCHAR * argv[])
             prg_sect[no_sect].type = SECT_DATA;
             prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
             prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
+            prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
             prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
-            file_offset += (uint32_t)psec->get_size();                  // Update prg offset
-            toshead.PRG_dsize += (uint32_t)psec->get_size();            // Update prg data size
+            prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
+            prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
+            file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
+            toshead.PRG_dsize += prg_sect[no_sect].padded_size;         // Update prg data size
             section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
             no_sect++;
         }
@@ -347,6 +366,9 @@ int _tmain(int argc, TCHAR * argv[])
             prg_sect[no_sect].type = SECT_BSS;
             prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
             prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
+            prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
+            prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
+            prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
             toshead.PRG_bsize += (uint32_t)psec->get_size();            // Update prg bss size
             no_sect++;
         }
@@ -382,15 +404,15 @@ int _tmain(int argc, TCHAR * argv[])
                     if (0)
                     {
                         std::cout << "Relocatable symbol " << j << " at section " << i
-                                  << " [" << psec->get_name() << "] at offset " << offset << " addend " << addend<< std::endl;
+                                  << " [" << psec->get_name() << "] at offset " << offset << " addend " << addend << std::endl;
                     }
                     // TODO: Ok, we need to mark which section this relocation
                     // is refering to. For now we're going to blindly assume that it
                     // refers to the previous one as they usually go in pairs
                     // (.text / .rela.text). If this is bad then well, this is what
                     // to change!
-					assert(i >= 0);
-					assert(section_map[i - 1] >= 0);
+                    assert(i >= 0);
+                    assert(section_map[i - 1] >= 0);
                     tos_relocs[no_relocs].section = section_map[i - 1];
                     tos_relocs[no_relocs].offset_fixup = (uint32_t)offset;
                     no_relocs++;
@@ -417,6 +439,29 @@ int _tmain(int argc, TCHAR * argv[])
                 }
             }
         }
+    }
+
+
+    // Print some basic info
+    std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl <<
+              "Data size:" << toshead.PRG_dsize << std::endl <<
+              "BSS size:" << toshead.PRG_bsize << std::endl;
+
+    // shove all reloc indices in a map, using the address as the sort key
+    // (equivalent to a tree-insert-sort)
+    typedef std::map<uint32_t, int> relocmap_t;
+    relocmap_t relocmap;
+    for (int r = 0; r < no_relocs; r++)
+    {
+        // compute reloc address
+        //uint32_t addr = tos_relocs[r].offset_fixup + prg_sect[tos_relocs[r].section].offset - 28;
+        uint32_t addr = tos_relocs[r].offset_fixup;
+
+        // make sure only one reloc for each address!
+        assert(relocmap.find(addr) == relocmap.end());
+
+        // index of this reloc address
+        relocmap[addr] = r;
     }
 
     // TODO: look into making a proper GST symbol table
@@ -480,15 +525,7 @@ int _tmain(int argc, TCHAR * argv[])
              (0800H) as the size of a common region.
     */
 
-    typedef struct
-    {
-        char name[8];
-        uint16_t type;
-        uint32_t value;
-    } GST_SYMBOL;
-
-    GST_SYMBOL symtab[100*1024];    // Enough? Who knows!
-    int no_sym=0;
+    int no_sym = 0;
 
     if (SYMTABLE)
     {
@@ -501,9 +538,12 @@ int _tmain(int argc, TCHAR * argv[])
 
                 Elf_Xword     sym_no = symbols.get_symbols_num();
 
-                if ( sym_no > 0 ) {
-                    
-                    for ( Elf_Half i = 0; i < sym_no; ++i ) {
+                if ( sym_no > 0 )
+                {
+
+                    for ( Elf_Half i = 0; i < sym_no; ++i )
+                    {
+                        char gst_name[8] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
                         std::string   name;
                         Elf64_Addr    value   = 0;
                         Elf_Xword     size    = 0;
@@ -512,66 +552,117 @@ int _tmain(int argc, TCHAR * argv[])
                         Elf_Half      section = 0;
                         unsigned char other   = 0;
                         symbols.get_symbol( i, name, value, size, bind, type, section, other );
-                        name[7]=0;  //TODO: check everything!
-                        strcpy(symtab[no_sym].name,name.c_str());
-                        symtab[no_sym].value=value;
-                        switch (type)
+                        //name[7]=0;  //TODO: check everything!
+                        strcpy(gst_name, name.substr(0, 7).c_str());
+                        // Skip null names
+                        if (gst_name[0] == NULL)
+                            continue;
+                        // Check binding type
+                        switch (bind)
                         {
                         case STB_LOCAL:
                         case STB_WEAK:
-                            {
-                                //Bounds checking to see which segment it belongs
-                                symtab[no_sym].type=0x100; //TEXT
-                                symtab[no_sym].type=0x200; //DATA
-                                symtab[no_sym].type=0x300; //BSS
-                            }
                         case STB_GLOBAL:
+                        {
+                            // Section 65521 is (probably) the section for absolute labels
+                            if (section == 65521 && value != 0)
                             {
-                                symtab[no_sym].type=0x2000;
+                                strcpy(symtab[no_sym].name, gst_name);
+                                symtab[no_sym].type = 0x2000;
+                                symtab[no_sym].value = (uint32_t)value;
                             }
+                            else if (section == 65521 && value == 0)
+                            {
+                                break;
+                            }
+                            else
+                            {
+                                // Bounds checking to see which segment it belongs
+                                for (int j = 0; j < no_sect; j++)
+                                {
+                                    if (value >= prg_sect[j].sect_start && value <= prg_sect[j].sect_end)
+                                    {
+                                        strcpy(symtab[no_sym].name, gst_name);
+                                        symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+                                        switch (prg_sect[j].type)
+                                        {
+                                        case SECT_TEXT:
+                                            symtab[no_sym].type = 0x8200; //TEXT + defined
+                                            no_sym++;
+                                            break;
+                                        case SECT_DATA:
+                                            symtab[no_sym].type = 0x8400; //DATA + defined
+                                            no_sym++;
+                                            break;
+                                        case SECT_BSS:
+                                            symtab[no_sym].type = 0x8100; //BSS + defined
+                                            no_sym++;
+                                            break;
+                                        default:
+                                            // Probably do nothing?
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            break;
+                        }
+                        //case STB_GLOBAL:
+                        //{
+                        //    // Section 65521 is (probably) the section for absolute labels
+                        //    if (section == 65521 && value != 0)
+                        //    {
+                        //        strcpy(symtab[no_sym].name, gst_name);
+                        //        symtab[no_sym].type = 0x2000;
+                        //        symtab[no_sym].value = (uint32_t)value;
+                        //    }
+                        //    else
+                        //    {
+                        //        for (int j = 0; j < no_sect; j++)
+                        //        {
+                        //            if (value >= prg_sect[j].sect_start && value <= prg_sect[j].sect_end)
+                        //            {
+                        //                strcpy(symtab[no_sym].name, gst_name);
+                        //                symtab[no_sym].type = 0x2000;
+                        //                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset;
+                        //                no_sym++;
+                        //                break;
+                        //            }
+                        //        }
+                        //    }
+                        //    break;
+                        //}
                         case STB_LOOS:
                         case STB_HIOS:
                         case STB_LOPROC:
                         case STB_HIPROC:
-                            {
-                                // Do nothing?
-                            }
+                        {
+                            // Do nothing?
+                            break;
                         }
-                        no_sym++;
+                        }
 
                     }
 
                 }
 
-
-                //prg_sect[no_sect].type=SECT_BSS;
-                //prg_sect[no_sect].offset=file_offset;
-                //prg_sect[no_sect].reloc_needed=false;
-                //bss_size+=psec->get_size();
-                //no_sect++;
             }
         }
-        toshead.PRG_ssize=no_sym*14;
-        //Byte swap table and dump it
-        for (int i=0;i<no_sym;i++)
+        toshead.PRG_ssize = no_sym * sizeof(GST_SYMBOL);
+        //Byte swap table
+        for (int i = 0; i < no_sym; i++)
         {
-            symtab[i].type=BYTESWAP16(symtab[i].type);
-            symtab[i].value=BYTESWAP32(symtab[i].value);
+            symtab[i].type = BYTESWAP16(symtab[i].type);
+            symtab[i].value = BYTESWAP32(symtab[i].value);
         }
     }
-
-
-    // Print some basic info
-    std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl <<
-              "Data size:" << toshead.PRG_dsize << std::endl <<
-              "BSS size:" << toshead.PRG_bsize << std::endl;
 
     // Open output file and write things
     FILE *tosfile = fopen(outfile, "wb");
 
-
     // Byte swap prg header if needed
-    // TODO: take care of portability stuff.... eventually
     PRG_HEADER writehead;
     writehead.PRG_magic = BYTESWAP16(toshead.PRG_magic);
     writehead.PRG_tsize = BYTESWAP32(toshead.PRG_tsize);
@@ -591,80 +682,66 @@ int _tmain(int argc, TCHAR * argv[])
         if (prg_sect[i].type == SECT_TEXT || prg_sect[i].type == SECT_DATA)
         {
             fwrite(prg_sect[i].data, prg_sect[i].size, 1, tosfile);
-            file_offset += prg_sect[i].size;
-
+            if ((prg_sect[i].size & 1) == 1)
+            {
+                // Odd size, add padding
+                char pad = 0;
+                fwrite(&pad, 1, 1, tosfile);
+            }
         }
-        // TODO: Add padding after sections?
+        // TODO: Add padding after sections? (hopefully done)
         // TODO2: For 030 executables pad sections to 4 bytes?
-        // TODO3: For 030 executables, insert a nop at the start of the first
-        //        text segment so the start of the code is aligned to 4 bytes?
-        //        (TOS 4 aligns mallocs to 4 bytes but the header is 28 bytes)
     }
 
-    // TODO: write symbol table
+    // write symbol table
     if (toshead.PRG_ssize != 0)
     {
-        fwrite(symtab,toshead.PRG_ssize,1,tosfile);
-        file_offset+=toshead.PRG_ssize;
+        fwrite(symtab, toshead.PRG_ssize, 1, tosfile);
     }
 
-	// shove all reloc indices in a map, using the address as the sort key
-	// (equivalent to a tree-insert-sort)
-	typedef std::map<uint32_t, int> relocmap_t;
-	relocmap_t relocmap;
-	for (int r = 0; r < no_relocs; r++)
-	{
-		// compute reloc address
-		//uint32_t addr = tos_relocs[r].offset_fixup + prg_sect[tos_relocs[r].section].offset - 28;
-		uint32_t addr = tos_relocs[r].offset_fixup;
-
-		// make sure only one reloc for each address!
-		assert(relocmap.find(addr) == relocmap.end());
-
-		// index of this reloc address
-		relocmap[addr] = r;
-	}
 
     // Write relocation table
-	if (no_relocs > 0)
+    if (no_relocs > 0)
     {
-		// sorted map of reloc indices
-		relocmap_t::iterator it = relocmap.begin();
+        // sorted map of reloc indices
+        relocmap_t::iterator it = relocmap.begin();
 
-		// get first address-sorted reloc index
-		int ri = it->second; it++;
+        // get first address-sorted reloc index
+        int ri = it->second;
+        it++;
 
-		uint32_t current_reloc;
-		uint32_t next_reloc;
-		uint32_t diff;
-		uint8_t temp;
-		uint32_t temp_byteswap;
-		// Handle first relocation separately as
-		// the offset needs to be a longword.
-				
+        uint32_t current_reloc;
+        uint32_t next_reloc;
+        uint32_t diff;
+        uint8_t temp;
+        uint32_t temp_byteswap;
+        // Handle first relocation separately as
+        // the offset needs to be a longword.
 
-		current_reloc = tos_relocs[ri].offset_fixup;
-		temp_byteswap = BYTESWAP32(current_reloc);
-		fwrite(&temp_byteswap, 4, 1, tosfile);
-		for (int i = 1; i < no_relocs; i++)
-		{
-			// get next address-sorted reloc index
-			int ri = it->second; it++;
 
-			next_reloc = tos_relocs[ri].offset_fixup;
-			diff = next_reloc - current_reloc;
-			while (diff > 254)
-			{
-				temp = 1;
-				fwrite(&temp, 1, 1, tosfile);
-				diff -= 254;
-			}
-			temp = diff;
-			fwrite(&temp, 1, 1, tosfile);
-			current_reloc = next_reloc;
-		}
+        current_reloc = tos_relocs[ri].offset_fixup;
+        temp_byteswap = BYTESWAP32(current_reloc);
+        fwrite(&temp_byteswap, 4, 1, tosfile);
+        for (int i = 1; i < no_relocs; i++)
+        {
+            // get next address-sorted reloc index
+            int ri = it->second;
+            it++;
 
-		// Finally, write a 0 to terminate the symbol table
+            next_reloc = tos_relocs[ri].offset_fixup;
+            diff = next_reloc - current_reloc;
+            while (diff > 254)
+            {
+                temp = 1;
+                fwrite(&temp, 1, 1, tosfile);
+                diff -= 254;
+            }
+            temp = diff;
+            fwrite(&temp, 1, 1, tosfile);
+            current_reloc = next_reloc;
+        }
+
+        // Finally, write a 0 to terminate the symbol table
         temp = 0;
         fwrite(&temp, 1, 1, tosfile);
     }
@@ -680,5 +757,6 @@ int _tmain(int argc, TCHAR * argv[])
 
     return 0;
 }
+
 
 
