@@ -161,11 +161,14 @@ void printhelp()
             "-d will turn on verbose debugging.\n");
 }
 
-typedef struct
-{
-    uint32_t offset_fixup;                      // Offset inside the section
-    int section;                                // Which section we're on
-} TOS_RELOC;
+    typedef struct
+    {
+		uint32_t offset_fixup;					// Offset inside the section
+		uint32_t elfsymaddr;
+        int elfsection;								// Which section we're on
+		int tossection;
+
+    } TOS_RELOC;
 
 TOS_RELOC tos_relocs[100 * 1024];                // Enough? Who knows!
 
@@ -196,11 +199,13 @@ enum
     SECT_BSS
 };
 
+			
+uint32_t relo_data[1];
 
 int _tmain(int argc, TCHAR * argv[])
 {
 
-    PRG_HEADER toshead = {0, 0, 0, 0, 0, 0, 0, 0};  // Set up TOS header
+    PRG_HEADER toshead = {0x601a, 0, 0, 0, 0, 0, 0, 0};  // Set up TOS header
 
     //if ( argc != 3 && argc != 4)
     //{
@@ -290,24 +295,27 @@ int _tmain(int argc, TCHAR * argv[])
         dump::segment_datas  ( std::cout, reader );
     }
 
-    //
+    // From here on starts the browness - helmets on!
 
     Elf_Half sec_num = reader.sections.size();
 
-    toshead.PRG_magic = 0x601a;                     // MandatoryA
-
-    //if (argc == 4)
-    //    toshead.PRGFLAGS = atoi(argv[3]);           // Set PRGFLAGS
+	typedef std::map<uint32_t, std::pair<uint32_t, int> > elfsectionboundsmap_t;
+	elfsectionboundsmap_t elfsectionboundsmap;
 
     int no_relocs = 0;
 
     uint32_t file_offset = 28;                      // Mostly used to calculate the offset of the BSS section inside the .prg
-    ST_SECTION prg_sect[32];                        // Enough? Who knows!
-    int section_map[32];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
+    ST_SECTION prg_sect[256];                        // Enough? Who knows!
+    int section_map[256];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
     int no_sect = 0;
+	bool claimed_sections[256];
 
-    for (int i = 0; i < 32; i++)
-        section_map[i] = -1;
+
+	for (int i = 0; i < 256; i++)
+	{
+		section_map[i] = -1;
+		claimed_sections[i] = false;
+	}
 
     section *psec;
 
@@ -315,13 +323,13 @@ int _tmain(int argc, TCHAR * argv[])
     // making prg_sect [32][3] and iterating once again
     // to determine offsets into file?
 
-    // Group text segments and determine their position inside the output file
     for ( int i = 0; i < sec_num; i++ )
     {
+		if (claimed_sections[i]) continue;
         psec = reader.sections[i];
-        if (psec->get_type() == SHT_PROGBITS &&
-                psec->get_name() == ".text")
+		if ((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".boot"))
         {
+			claimed_sections[i] = true;
             prg_sect[no_sect].type = SECT_TEXT;
             prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
             prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
@@ -329,9 +337,55 @@ int _tmain(int argc, TCHAR * argv[])
             prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
             prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
             prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
+
+			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// section and identify it from a single query address.
+			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);		
+
             file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
             toshead.PRG_tsize += prg_sect[no_sect].padded_size;         // Update prg text size
             section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
+			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            no_sect++;
+        }
+    }
+    // Group text segments and determine their position inside the output file
+    for ( int i = 0; i < sec_num; i++ )
+    {
+		if (claimed_sections[i]) continue;
+        psec = reader.sections[i];
+		if 
+		(
+			(psec->get_flags() & SHF_EXECINSTR) ||			
+			//((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".text")) ||
+			//((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".init")) ||
+			//((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".fini")) ||
+			(
+				(psec->get_type() == SHT_INIT_ARRAY) ||
+				(psec->get_type() == SHT_PREINIT_ARRAY) ||
+				(psec->get_type() == SHT_FINI_ARRAY)
+			)
+		)
+        {
+			claimed_sections[i] = true;
+            prg_sect[no_sect].type = SECT_TEXT;
+            prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
+            prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
+            prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
+            prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
+            prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
+            prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
+
+			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// section and identify it from a single query address.
+			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);		
+
+            file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
+            toshead.PRG_tsize += prg_sect[no_sect].padded_size;         // Update prg text size
+            section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
+			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
             no_sect++;
         }
     }
@@ -339,20 +393,29 @@ int _tmain(int argc, TCHAR * argv[])
     // Group data segments and determine their position inside the output file
     for ( int i = 0; i < sec_num; i++ )
     {
+		if (claimed_sections[i]) continue;
         psec = reader.sections[i];
-        if (psec->get_type() == SHT_PROGBITS &&
-                psec->get_name() == ".data")
+        if (psec->get_type() == SHT_PROGBITS && (psec->get_flags() & SHF_ALLOC)
+                /*psec->get_name() == ".data"*/)
         {
+			claimed_sections[i] = true;
             prg_sect[no_sect].type = SECT_DATA;
             prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
             prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
             prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
             prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
+
+			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// section and identify it from a single query address.
+			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);		
+	
             prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
             prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
             file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
             toshead.PRG_dsize += prg_sect[no_sect].padded_size;         // Update prg data size
             section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
+			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
             no_sect++;
         }
     }
@@ -360,16 +423,26 @@ int _tmain(int argc, TCHAR * argv[])
     // Group BSS segments and determine their position inside the output file
     for ( int i = 0; i < sec_num; i++ )
     {
+		if (claimed_sections[i]) continue;
         psec = reader.sections[i];
         if (psec->get_type() == SHT_NOBITS)
         {
+			claimed_sections[i] = true;
             prg_sect[no_sect].type = SECT_BSS;
             prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
             prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
+
+			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// section and identify it from a single query address.
+			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);			
+			
             prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
             prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
             prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
             toshead.PRG_bsize += (uint32_t)psec->get_size();            // Update prg bss size
+			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
+			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
             no_sect++;
         }
     }
@@ -380,9 +453,9 @@ int _tmain(int argc, TCHAR * argv[])
     {
         psec = reader.sections[i];
         std::string sectname = psec->get_name();                        // Debug
-        int test1 = sectname.find(".text");                             // Check if this is a text relocation segment
-        int test2 = sectname.find(".data");                             // Check if this is a data relocation segment
-        if (psec->get_type() == SHT_RELA && (test1 > 0 || test2 > 0))
+//        int test1 = sectname.find(".text");                             // Check if this is a text relocation segment
+//        int test2 = sectname.find(".data");                             // Check if this is a data relocation segment
+        if (psec->get_type() == SHT_RELA /*&& (test1 > 0 || test2 > 0)*/)
         {
             Elf64_Addr   offset;
             Elf64_Addr   symbolValue;
@@ -401,10 +474,17 @@ int _tmain(int argc, TCHAR * argv[])
                 {
                 case R_68K_32:
                 {
-                    if (0)
+                    if (DEBUG)
                     {
-                        std::cout << "Relocatable symbol " << j << " at section " << i
-                                  << " [" << psec->get_name() << "] at offset " << offset << " addend " << addend << std::endl;
+                        std::cout << "Reloc " << j 
+								  << " in section " << i << " [" << psec->get_name() << "]"
+								  << " offset:" << offset 
+								  << " symval:" << symbolValue 
+								  << " sym:" << symbolName
+								  << " type:" << type 
+								  << " addend:" << addend
+								  << " calc:" << calcValue 
+								  << std::endl;
                     }
                     // TODO: Ok, we need to mark which section this relocation
                     // is refering to. For now we're going to blindly assume that it
@@ -413,10 +493,12 @@ int _tmain(int argc, TCHAR * argv[])
                     // to change!
                     assert(i >= 0);
                     assert(section_map[i - 1] >= 0);
-                    tos_relocs[no_relocs].section = section_map[i - 1];
+                    tos_relocs[no_relocs].elfsection = i - 1;
+                    tos_relocs[no_relocs].tossection = section_map[i - 1];
                     tos_relocs[no_relocs].offset_fixup = (uint32_t)offset;
+					tos_relocs[no_relocs].elfsymaddr = calcValue;// symbolValue;
                     no_relocs++;
-                    break;
+                     break;
                 }
                 case R_68K_16:
                 {
@@ -427,8 +509,9 @@ int _tmain(int argc, TCHAR * argv[])
                 }
                 case R_68K_PC16:
                 {
-                    //PC relative section, no relocation needed
-                    break;
+                    std::cout << "Section" << i <<
+                              ": 16-bit relocations not allowed (apparently)"
+                              << std::endl;                    break;
                 }
                 default:
                 {
@@ -447,25 +530,7 @@ int _tmain(int argc, TCHAR * argv[])
               "Data size:" << toshead.PRG_dsize << std::endl <<
               "BSS size:" << toshead.PRG_bsize << std::endl;
 
-    // shove all reloc indices in a map, using the address as the sort key
-    // (equivalent to a tree-insert-sort)
-    typedef std::map<uint32_t, int> relocmap_t;
-    relocmap_t relocmap;
-    for (int r = 0; r < no_relocs; r++)
-    {
-        // compute reloc address
-        //uint32_t addr = tos_relocs[r].offset_fixup + prg_sect[tos_relocs[r].section].offset - 28;
-        uint32_t addr = tos_relocs[r].offset_fixup;
-
-        // make sure only one reloc for each address!
-        assert(relocmap.find(addr) == relocmap.end());
-
-        // index of this reloc address
-        relocmap[addr] = r;
-    }
-
-    // TODO: look into making a proper GST symbol table
-
+	
     /*
     SYMBOL TABLE
     ------------
@@ -527,6 +592,8 @@ int _tmain(int argc, TCHAR * argv[])
 
     int no_sym = 0;
 
+    // TODO: look into extended format?
+    
     if (SYMTABLE)
     {
         for ( int i = 0; i < sec_num; i++ )
@@ -660,7 +727,7 @@ int _tmain(int argc, TCHAR * argv[])
     }
 
     // Open output file and write things
-    FILE *tosfile = fopen(outfile, "wb");
+    FILE *tosfile = fopen(outfile, "w+b");
 
     // Byte swap prg header if needed
     PRG_HEADER writehead;
@@ -700,48 +767,165 @@ int _tmain(int argc, TCHAR * argv[])
     }
 
 
+	// shove all reloc indices in a map, using the address as the sort key
+	// (equivalent to a tree-insert-sort)
+	typedef std::map<uint32_t, int> relocmap_t;
+	relocmap_t relocmap;
+	for (int r = 0; r < no_relocs; r++)
+	{
+		// compute reloc address
+		section *psec = reader.sections[tos_relocs[r].elfsection];
+		uint32_t esa = psec->get_address();
+		uint32_t tsa = prg_sect[tos_relocs[r].tossection].offset;
+
+		uint32_t tosreloc_file = tos_relocs[r].offset_fixup - esa + tsa;
+		uint32_t tosreloc_mem = tosreloc_file - 28;
+
+		// make sure only one reloc for each address!
+		assert(relocmap.find(tosreloc_mem) == relocmap.end());
+
+		// index of this reloc address
+		relocmap[tosreloc_mem] = r;
+	}
+
+	if (no_relocs > 0)
+	{
+		fflush(tosfile);
+		long sv = ftell(tosfile);
+
+		// sorted map of reloc indices
+		relocmap_t::iterator it = relocmap.begin();
+
+		while (it != relocmap.end())
+		{
+			int r = it->second; it++;
+
+			section *psec = reader.sections[tos_relocs[r].elfsection];
+			uint32_t esa = psec->get_address();
+			uint32_t tsa = prg_sect[tos_relocs[r].tossection].offset;
+
+			uint32_t tosreloc_file = tos_relocs[r].offset_fixup - esa + tsa;
+			uint32_t tosreloc_mem = tosreloc_file - 28;
+
+			printf("esa:%x, tsa:%x, osf:%x, tosreloc:%x\n", esa, tsa, tos_relocs[r].offset_fixup, tosreloc_mem);
+
+			// adjust the original reloc value to cope with section output rearrangement (ELF->TOS)
+			// since the automatic part of the relocation is a shared base address only. we're upsetting 
+			// relocs on an individual (or at least per-section) basis so they need more fine-grained repair.
+			if (1)
+			{
+				// extract the original reloc data
+				fseek(tosfile, (long)tosreloc_file, 0);
+				fread(relo_data, 1, 4, tosfile);
+				uint32_t reference = BYTESWAP32(relo_data[0]);
+
+				reference = tos_relocs[r].elfsymaddr;
+
+				// find ELF section this reference belongs to (section with lower bound <= query address)
+				elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(reference);
+				// make sure it refers to a section we actually kept
+				assert(reference_bound != elfsectionboundsmap.end());
+				// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
+				assert(reference >= reference_bound->second.first);
+				// get ELF section index pair<endaddr,[index]>
+				int reference_elfidx = reference_bound->second.second;
+				assert(section_map[reference_elfidx] >= 0);
+				// base address of original elf section bounding the reference
+				uint32_t reference_esa = reader.sections[reference_elfidx]->get_address();
+				// base address of new tos section bounding the reference
+				uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
+
+/*
+// we don't need this unless we have to relocate XX.l(PC) relative between two sections \o/
+				uint32_t relocsite = tos_relocs[r].offset_fixup;
+				// find ELF section this reference belongs to (sectirefeon with lower bound <= query address)
+				elfsectionboundsmap_t::iterator relocsite_bound = elfsectionboundsmap.upper_bound(relocsite);
+				// make sure it refers to a section we actually kept
+				assert(relocsite_bound != elfsectionboundsmap.end());
+				// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
+				assert(relocsite >= relocsite_bound->second.first);
+				// get ELF section index pair<endaddr,[index]>
+				int relocsite_elfidx = relocsite_bound->second.second;
+				assert(section_map[relocsite_elfidx] >= 0);
+				// base address of original elf section bounding the reference
+				uint32_t relocsite_esa = reader.sections[relocsite_elfidx]->get_address();
+				// base address of new tos section bounding the reference
+				uint32_t relocsite_tsa = prg_sect[section_map[relocsite_elfidx]].offset - 28;
+*/
+
+
+				printf("reloc references: ea:%x esec:%s ess:%x ese:%x\n", 
+					reference, 
+					reader.sections[reference_elfidx]->get_name().c_str(), 
+					reference_bound->second.first, 
+					reference_bound->first
+				);
+
+				// adjust the relocation to compensate for section rearrangement
+				reference = reference - reference_esa + reference_tsa;
+				
+				//if (relocsite_elfidx == reference_elfidx)
+				//{
+				//	// if the relocation refers to same section, apply relocsite adjustment to reference
+				//	reference = reference - relocsite_esa + relocsite_tsa;
+				//}
+				//else
+				//{
+				//	// if the relocation crosses section bounaries, apply adjustment to reference
+				//	reference = reference - reference_esa + reference_tsa;
+				//}
+
+				// store the updated reloc data
+				relo_data[0] = BYTESWAP32(reference);
+				fseek(tosfile, (long)tosreloc_file, 0);
+				fwrite(relo_data, 1, 4, tosfile);
+			}
+		}
+		fseek(tosfile, sv, 0);
+	}
+	
     // Write relocation table
-    if (no_relocs > 0)
+	if (no_relocs > 0)
     {
-        // sorted map of reloc indices
-        relocmap_t::iterator it = relocmap.begin();
-
-        // get first address-sorted reloc index
-        int ri = it->second;
-        it++;
-
-        uint32_t current_reloc;
-        uint32_t next_reloc;
-        uint32_t diff;
-        uint8_t temp;
-        uint32_t temp_byteswap;
-        // Handle first relocation separately as
-        // the offset needs to be a longword.
+		// sorted map of reloc indices
+		relocmap_t::iterator it = relocmap.begin();
 
 
-        current_reloc = tos_relocs[ri].offset_fixup;
-        temp_byteswap = BYTESWAP32(current_reloc);
-        fwrite(&temp_byteswap, 4, 1, tosfile);
-        for (int i = 1; i < no_relocs; i++)
-        {
-            // get next address-sorted reloc index
-            int ri = it->second;
-            it++;
+		uint32_t current_reloc;
+		uint32_t next_reloc;
+		uint32_t diff;
+		uint8_t temp;
+		uint32_t temp_byteswap;
+		// Handle first relocation separately as
+		// the offset needs to be a longword.
+				
+		// get first address-sorted reloc index
+		current_reloc = it->first;
+		int ri = it->second; it++;
 
-            next_reloc = tos_relocs[ri].offset_fixup;
-            diff = next_reloc - current_reloc;
-            while (diff > 254)
-            {
-                temp = 1;
-                fwrite(&temp, 1, 1, tosfile);
-                diff -= 254;
-            }
-            temp = diff;
-            fwrite(&temp, 1, 1, tosfile);
-            current_reloc = next_reloc;
-        }
+//		current_reloc = tos_relocs[ri].offset_fixup;
+		temp_byteswap = BYTESWAP32(current_reloc);
+		fwrite(&temp_byteswap, 4, 1, tosfile);
+		for (int i = 1; i < no_relocs; i++)
+		{
+			// get next address-sorted reloc index
+			next_reloc = it->first;
+			int ri = it->second; it++;
 
-        // Finally, write a 0 to terminate the symbol table
+//			next_reloc = tos_relocs[ri].offset_fixup;
+			diff = next_reloc - current_reloc;
+			while (diff > 254)
+			{
+				temp = 1;
+				fwrite(&temp, 1, 1, tosfile);
+				diff -= 254;
+			}
+			temp = diff;
+			fwrite(&temp, 1, 1, tosfile);
+			current_reloc = next_reloc;
+		}
+
+		// Finally, write a 0 to terminate the symbol table
         temp = 0;
         fwrite(&temp, 1, 1, tosfile);
     }
