@@ -125,7 +125,8 @@ enum
     OPT_ELF_SECTION_DATAS,
     OPT_ELF_SEGMENT_DATAS,
     OPT_HELP,
-    OPT_DEBUG
+    OPT_DEBUG,
+    OPT_EXTEND
 };
 
 CSimpleOpt::SOption g_rgOptions[] =
@@ -135,6 +136,7 @@ CSimpleOpt::SOption g_rgOptions[] =
     { OPT_PRGFLAGS,             _T("-p"),     SO_REQ_SEP },
     { OPT_SYMTABLE,             _T("-s"),     SO_NONE    },
     { OPT_DEBUG,                _T("-d"),     SO_NONE    },
+    { OPT_EXTEND,               _T("-x"),     SO_NONE    },
     { OPT_HELP,                 _T("-h"),     SO_NONE    },
     SO_END_OF_OPTIONS                       // END
 };
@@ -610,7 +612,7 @@ int _tmain(int argc, TCHAR * argv[])
 
                     for ( Elf_Half i = 0; i < sym_no; ++i )
                     {
-                        char gst_name[8] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+                        char gst_name[9] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
                         std::string   name;
                         Elf64_Addr    value   = 0;
                         Elf_Xword     size    = 0;
@@ -619,8 +621,7 @@ int _tmain(int argc, TCHAR * argv[])
                         Elf_Half      section = 0;
                         unsigned char other   = 0;
                         symbols.get_symbol( i, name, value, size, bind, type, section, other );
-                        //name[7]=0;  //TODO: check everything!
-                        strcpy(gst_name, name.substr(0, 7).c_str());
+                        strcpy(gst_name, name.substr(0, 8).c_str());
                         // Skip null names
                         if (gst_name[0] == NULL)
                             continue;
@@ -634,7 +635,7 @@ int _tmain(int argc, TCHAR * argv[])
                             // Section 65521 is (probably) the section for absolute labels
                             if (section == 65521 && value != 0)
                             {
-                                strcpy(symtab[no_sym].name, gst_name);
+                                memcpy(symtab[no_sym].name, gst_name, 8);
                                 symtab[no_sym].type = 0x2000;
                                 symtab[no_sym].value = (uint32_t)value;
                             }
@@ -649,7 +650,7 @@ int _tmain(int argc, TCHAR * argv[])
                                 {
                                     if (value >= prg_sect[j].sect_start && value <= prg_sect[j].sect_end)
                                     {
-                                        strcpy(symtab[no_sym].name, gst_name);
+                                        memcpy(symtab[no_sym].name, gst_name, 8);
                                         symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
                                         switch (prg_sect[j].type)
                                         {
