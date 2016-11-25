@@ -17,6 +17,9 @@ the WTFPL. Probably.
 
 */
 
+// enable to auto-demangle c++ symbols to human-readable for debugging
+#define ENABLE_CPP_SYMBOL_DEMANGLING (1)
+
 #ifdef _MSC_VER
 #define _SCL_SECURE_NO_WARNINGS
 #define ELFIO_NO_INTTYPES
@@ -38,6 +41,10 @@ the WTFPL. Probably.
 #include <elfio/elfio.hpp>
 #include <SimpleOpt.h>
 #include <map>
+
+#if (ENABLE_CPP_SYMBOL_DEMANGLING)
+void demangle(std::string &name, std::string &demangled);
+#endif
 
 // Little endian to big endian conversion depending on platform
 #if defined(__linux__)
@@ -335,6 +342,8 @@ int _tmain(int argc, TCHAR * argv[])
     // making prg_sect [32][3] and iterating once again
     // to determine offsets into file?
 
+	std::cout << "performing section layout..." << std::endl;
+
     for ( int i = 0; i < sec_num; i++ )
     {
 		if (claimed_sections[i]) continue;
@@ -459,6 +468,13 @@ int _tmain(int argc, TCHAR * argv[])
         }
     }
 
+    // Print some basic info
+    std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl <<
+              "Data size:" << toshead.PRG_dsize << std::endl <<
+              "BSS size:" << toshead.PRG_bsize << std::endl;
+
+	std::cout << "processing relocation entries..." << std::endl;
+
     // Perform any relocations that may be needed
     //section *psec_reloc;
     for ( int i = 0; i < sec_num; i++ )
@@ -536,12 +552,6 @@ int _tmain(int argc, TCHAR * argv[])
         }
     }
 
-
-    // Print some basic info
-    std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl <<
-              "Data size:" << toshead.PRG_dsize << std::endl <<
-              "BSS size:" << toshead.PRG_bsize << std::endl;
-
 	
     /*
     SYMBOL TABLE
@@ -608,6 +618,8 @@ int _tmain(int argc, TCHAR * argv[])
     
     if (SYMTABLE)
     {
+		std::cout << "generating symbol table..." << std::endl;
+
         for ( int i = 0; i < sec_num; i++ )
         {
             psec = reader.sections[i];
@@ -634,10 +646,23 @@ int _tmain(int argc, TCHAR * argv[])
                         Elf_Half      section = 0;
                         unsigned char other   = 0;
                         symbols.get_symbol( i, name, value, size, bind, type, section, other );
-                        strcpy(gst_name, name.substr(0, 24).c_str());
+
+#if (ENABLE_CPP_SYMBOL_DEMANGLING)
+						if (name.length() > 0)
+						{
+							demangle(name, name);
+							if (DEBUG)
+							{
+								std::cout << "demangled: " << name << std::endl;
+							}
+						}
+#endif
+
+						strcpy(gst_name, name.substr(0, 24).c_str());
                         // Skip null names
                         if (gst_name[0] == NULL)
                             continue;
+
                         // Check binding type
                         switch (bind)
                         {
@@ -795,6 +820,8 @@ int _tmain(int argc, TCHAR * argv[])
         }
     }
 
+	std::cout << "emitting program data..." << std::endl;
+
     // Open output file and write things
     FILE *tosfile = fopen(outfile, "w+b");
 
@@ -832,12 +859,17 @@ int _tmain(int argc, TCHAR * argv[])
     // write symbol table
     if (toshead.PRG_ssize != 0)
     {
+		std::cout << "emitting symbol table..." << std::endl;
+
         fwrite(symtab, toshead.PRG_ssize, 1, tosfile);
     }
 
 
 	// shove all reloc indices in a map, using the address as the sort key
 	// (equivalent to a tree-insert-sort)
+	if (no_relocs > 0)
+		std::cout << "sorting relocations..." << std::endl;
+
 	typedef std::map<uint32_t, int> relocmap_t;
 	relocmap_t relocmap;
 	for (int r = 0; r < no_relocs; r++)
@@ -859,6 +891,8 @@ int _tmain(int argc, TCHAR * argv[])
 
 	if (no_relocs > 0)
 	{
+		std::cout << "correcting relocations after section layout..." << std::endl;
+
 		fflush(tosfile);
 		long sv = ftell(tosfile);
 
@@ -876,7 +910,10 @@ int _tmain(int argc, TCHAR * argv[])
 			uint32_t tosreloc_file = tos_relocs[r].offset_fixup - esa + tsa;
 			uint32_t tosreloc_mem = tosreloc_file - 28;
 
-			printf("esa:%x, tsa:%x, osf:%x, tosreloc:%x\n", esa, tsa, tos_relocs[r].offset_fixup, tosreloc_mem);
+			if (DEBUG)
+			{
+				printf("esa:%x, tsa:%x, osf:%x, tosreloc:%x\n", esa, tsa, tos_relocs[r].offset_fixup, tosreloc_mem);
+			}
 
 			// adjust the original reloc value to cope with section output rearrangement (ELF->TOS)
 			// since the automatic part of the relocation is a shared base address only. we're upsetting 
@@ -923,12 +960,15 @@ int _tmain(int argc, TCHAR * argv[])
 */
 
 
-				printf("reloc references: ea:%x esec:%s ess:%x ese:%x\n", 
-					reference, 
-					reader.sections[reference_elfidx]->get_name().c_str(), 
-					reference_bound->second.first, 
-					reference_bound->first
-				);
+				if (DEBUG)
+				{
+					printf("reloc references: ea:%x esec:%s ess:%x ese:%x\n",
+						reference,
+						reader.sections[reference_elfidx]->get_name().c_str(),
+						reference_bound->second.first,
+						reference_bound->first
+						);
+				}
 
 				// adjust the relocation to compensate for section rearrangement
 				reference = reference - reference_esa + reference_tsa;
@@ -956,9 +996,10 @@ int _tmain(int argc, TCHAR * argv[])
     // Write relocation table
 	if (no_relocs > 0)
     {
+		std::cout << "emitting relocation table..." << std::endl;
+
 		// sorted map of reloc indices
 		relocmap_t::iterator it = relocmap.begin();
-
 
 		uint32_t current_reloc;
 		uint32_t next_reloc;
@@ -972,7 +1013,6 @@ int _tmain(int argc, TCHAR * argv[])
 		current_reloc = it->first;
 		int ri = it->second; it++;
 
-//		current_reloc = tos_relocs[ri].offset_fixup;
 		temp_byteswap = BYTESWAP32(current_reloc);
 		fwrite(&temp_byteswap, 4, 1, tosfile);
 		for (int i = 1; i < no_relocs; i++)
@@ -981,7 +1021,6 @@ int _tmain(int argc, TCHAR * argv[])
 			next_reloc = it->first;
 			int ri = it->second; it++;
 
-//			next_reloc = tos_relocs[ri].offset_fixup;
 			diff = next_reloc - current_reloc;
 			while (diff > 254)
 			{
@@ -1000,6 +1039,8 @@ int _tmain(int argc, TCHAR * argv[])
     }
     else
     {
+		std::cout << "no relocation table required." << std::endl;
+
         // Write a null longword to express list termination
         // (as suggested by the Atari Compendium chapter 2)
         fwrite(&no_relocs, 4, 1, tosfile);
@@ -1008,8 +1049,167 @@ int _tmain(int argc, TCHAR * argv[])
     // Done writing stuff
     fclose(tosfile);
 
+	std::cout << "done!" << std::endl;
+
     return 0;
 }
 
 
+#if (ENABLE_CPP_SYMBOL_DEMANGLING)
 
+//#include <string>
+//#include <iostream>
+//#include <windows.h> 
+//#include <stdio.h>
+//#pragma warning( disable : 4800 ) // stupid warning about bool
+#define BUFSIZE 4096
+HANDLE g_hChildStd_OUT_Rd = NULL;
+HANDLE g_hChildStd_OUT_Wr = NULL;
+HANDLE g_hChildStd_ERR_Rd = NULL;
+HANDLE g_hChildStd_ERR_Wr = NULL;
+
+PROCESS_INFORMATION CreateChildProcess(std::string &name); 
+void ReadFromPipe(PROCESS_INFORMATION, std::string &demangled); 
+
+void demangle(std::string &name, std::string &demangled)
+{
+    SECURITY_ATTRIBUTES sa; 
+    // Set the bInheritHandle flag so pipe handles are inherited. 
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES); 
+    sa.bInheritHandle = TRUE; 
+    sa.lpSecurityDescriptor = NULL; 
+    // Create a pipe for the child process's STDERR. 
+    if ( ! CreatePipe(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &sa, 0) ) {
+        exit(1); 
+    }
+    // Ensure the read handle to the pipe for STDERR is not inherited.
+    if ( ! SetHandleInformation(g_hChildStd_ERR_Rd, HANDLE_FLAG_INHERIT, 0) ){
+        exit(1);
+    }
+    // Create a pipe for the child process's STDOUT. 
+    if ( ! CreatePipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &sa, 0) ) {
+        exit(1);
+    }
+    // Ensure the read handle to the pipe for STDOUT is not inherited
+    if ( ! SetHandleInformation(g_hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0) ){
+        exit(1); 
+    }
+    // Create the child process. 
+    PROCESS_INFORMATION piProcInfo = CreateChildProcess(name);
+
+    // Read from pipe that is the standard output for child process. 
+    ReadFromPipe(piProcInfo, demangled); 
+
+	// filter illegal/annoying stuff out of symbols
+	std::string demangled_filtered;
+	for (std::string::iterator it = demangled.begin(); it != demangled.end(); it++)
+	{
+		char c = *it;
+		if ((c >= 32) && (c < 127))
+		{
+			switch (c)
+			{
+			case ' ': c = 0; break;
+			case '!': c = 0; break;
+			case '"': c = 0; break;
+			case '#': c = 0; break;
+			case '$': c = 0; break;
+			case '%': c = 0; break;
+			case '\'': c = 0; break;
+			case '`': c = 0; break;
+			case '.': c = 0; break;
+			case '/': c = 0; break;
+			case '\\': c = 0; break;
+			case ';': c = 0; break;
+			case '?': c = 0; break;
+			case '@': c = 0; break;
+			default:
+				break;
+			}
+			if (c)
+				demangled_filtered.push_back(c);
+		}
+	}
+	demangled = demangled_filtered;
+	
+    // The remaining open handles are cleaned up when this process terminates. 
+    // To avoid resource leaks in a larger application, 
+    //   close handles explicitly.
+} 
+
+// Create a child process that uses the previously created pipes
+//  for STDERR and STDOUT.
+PROCESS_INFORMATION CreateChildProcess(std::string &name)
+{
+	// remove superfluous underscore
+	std::string trimmed_name = name.substr(1, name.length() - 1);
+	std::string cmd = "m68k-ossom-elf-c++filt " + trimmed_name;
+
+    // Set the text I want to run
+    PROCESS_INFORMATION piProcInfo; 
+    STARTUPINFO siStartInfo;
+    bool bSuccess = FALSE; 
+
+    // Set up members of the PROCESS_INFORMATION structure. 
+    ZeroMemory( &piProcInfo, sizeof(PROCESS_INFORMATION) );
+
+    // Set up members of the STARTUPINFO structure. 
+    // This structure specifies the STDERR and STDOUT handles for redirection.
+    ZeroMemory( &siStartInfo, sizeof(STARTUPINFO) );
+    siStartInfo.cb = sizeof(STARTUPINFO); 
+    siStartInfo.hStdError = g_hChildStd_ERR_Wr;
+    siStartInfo.hStdOutput = g_hChildStd_OUT_Wr;
+    siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+    // Create the child process. 
+    bSuccess = CreateProcess(
+		NULL, 
+        (char*)cmd.c_str(),     // command line 
+        NULL,          // process security attributes 
+        NULL,          // primary thread security attributes 
+        TRUE,          // handles are inherited 
+        0,             // creation flags 
+        NULL,          // use parent's environment 
+        NULL,          // use parent's current directory 
+        &siStartInfo,  // STARTUPINFO pointer 
+        &piProcInfo);  // receives PROCESS_INFORMATION
+    CloseHandle(g_hChildStd_ERR_Wr);
+    CloseHandle(g_hChildStd_OUT_Wr);
+    // If an error occurs, exit the application. 
+    if ( ! bSuccess ) {
+        exit(1);
+    }
+    return piProcInfo;
+}
+
+// Read output from the child process's pipe for STDOUT
+// and write to the parent process's pipe for STDOUT. 
+// Stop when there is no more data. 
+void ReadFromPipe(PROCESS_INFORMATION piProcInfo, std::string &demangled) 
+{
+    DWORD dwRead; 
+    CHAR chBuf[BUFSIZE];
+    bool bSuccess = FALSE;
+    std::string out = "", err = "";
+    for (;;) { 
+        bSuccess=ReadFile( g_hChildStd_OUT_Rd, chBuf, BUFSIZE, &dwRead, NULL);
+        if( ! bSuccess || dwRead == 0 ) break; 
+
+        std::string s(chBuf, dwRead);
+        out += s;
+    } 
+    dwRead = 0;
+    for (;;) { 
+        bSuccess=ReadFile( g_hChildStd_ERR_Rd, chBuf, BUFSIZE, &dwRead, NULL);
+        if( ! bSuccess || dwRead == 0 ) break; 
+
+        std::string s(chBuf, dwRead);
+        err += s;
+
+    } 
+
+	// captured stdout
+	demangled = out;
+}
+
+#endif
