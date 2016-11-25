@@ -201,6 +201,12 @@ enum
     SECT_BSS
 };
 
+enum
+{
+    SYM_NONE,
+    SYM_DRI,
+    SYM_EXTEND
+};
 			
 uint32_t relo_data[1];
 
@@ -221,7 +227,7 @@ int _tmain(int argc, TCHAR * argv[])
     char infile[1024];
     char outfile[1024];
     bool DEBUG = false;
-    bool SYMTABLE = false;
+    int SYMTABLE = SYM_NONE;
 
     bool gotinput = false, gotoutput = false;
 
@@ -261,7 +267,11 @@ int _tmain(int argc, TCHAR * argv[])
             }
             else if (args.OptionId() == OPT_SYMTABLE)
             {
-                SYMTABLE = true;
+                SYMTABLE = SYM_DRI;
+            }
+            else if (args.OptionId() == OPT_EXTEND)
+            {
+                SYMTABLE = SYM_EXTEND;
             }
         }
         else
@@ -612,7 +622,10 @@ int _tmain(int argc, TCHAR * argv[])
 
                     for ( Elf_Half i = 0; i < sym_no; ++i )
                     {
-                        char gst_name[9] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+                        char gst_name[25] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                                             0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                                             0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                                             0x0};
                         std::string   name;
                         Elf64_Addr    value   = 0;
                         Elf_Xword     size    = 0;
@@ -621,7 +634,7 @@ int _tmain(int argc, TCHAR * argv[])
                         Elf_Half      section = 0;
                         unsigned char other   = 0;
                         symbols.get_symbol( i, name, value, size, bind, type, section, other );
-                        strcpy(gst_name, name.substr(0, 8).c_str());
+                        strcpy(gst_name, name.substr(0, 24).c_str());
                         // Skip null names
                         if (gst_name[0] == NULL)
                             continue;
@@ -635,9 +648,21 @@ int _tmain(int argc, TCHAR * argv[])
                             // Section 65521 is (probably) the section for absolute labels
                             if (section == 65521 && value != 0)
                             {
-                                memcpy(symtab[no_sym].name, gst_name, 8);
-                                symtab[no_sym].type = 0x2000;
-                                symtab[no_sym].value = (uint32_t)value;
+                                if (SYMTABLE == SYM_DRI || (SYMTABLE==SYM_EXTEND && strlen(gst_name)<=8))
+                                {
+                                    memcpy(symtab[no_sym].name, gst_name, 8);
+                                    symtab[no_sym].type = 0x2000;           // GLOBAL
+                                    symtab[no_sym].value = (uint32_t)value;
+                                }
+                                else
+                                {
+                                    memcpy(symtab[no_sym].name, gst_name, 8);
+                                    symtab[no_sym].type = 0x2048;           // GLOBAL + continued on next symbol
+                                    symtab[no_sym].value = (uint32_t)value;
+                                    no_sym++;
+                                    memcpy(&symtab[no_sym], &gst_name[8], 14);  // Extended mode - copy 1 more symbol's worth of chars in the next symbol
+                                    no_sym++;                                
+                                }
                             }
                             else if (section == 65521 && value == 0)
                             {
@@ -650,22 +675,65 @@ int _tmain(int argc, TCHAR * argv[])
                                 {
                                     if (value >= prg_sect[j].sect_start && value <= prg_sect[j].sect_end)
                                     {
-                                        memcpy(symtab[no_sym].name, gst_name, 8);
-                                        symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
                                         switch (prg_sect[j].type)
                                         {
                                         case SECT_TEXT:
-                                            symtab[no_sym].type = 0x8200; //TEXT + defined
-                                            no_sym++;
-                                            break;
+                                            if (SYMTABLE == SYM_DRI || (SYMTABLE==SYM_EXTEND && strlen(gst_name)<=8))
+                                            {
+                                                symtab[no_sym].type = 0x8200; //TEXT + defined
+                                                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+                                                memcpy(symtab[no_sym].name, gst_name, 8);
+                                                no_sym++;
+                                                break;
+                                            }
+                                            else
+                                            {
+                                                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+                                                memcpy(symtab[no_sym].name, gst_name, 8);
+                                                symtab[no_sym].type = 0x8248; //TEXT + defined + continued on next symbol
+                                                no_sym++;
+                                                memcpy(&symtab[no_sym], &gst_name[8], 14);  // Extended mode - copy 1 more symbol's worth of chars in the next symbol
+                                                no_sym++;
+                                                break;
+                                            }
                                         case SECT_DATA:
-                                            symtab[no_sym].type = 0x8400; //DATA + defined
-                                            no_sym++;
-                                            break;
+                                            if (SYMTABLE == SYM_DRI || (SYMTABLE==SYM_EXTEND && strlen(gst_name)<=8))
+                                            {
+                                                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+                                                memcpy(symtab[no_sym].name, gst_name, 8);
+                                                symtab[no_sym].type = 0x8400; //DATA + defined
+                                                no_sym++;
+                                                break;
+                                                }
+                                            else
+                                            {
+                                                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+                                                memcpy(symtab[no_sym].name, gst_name, 8);
+                                                symtab[no_sym].type = 0x8248; //DATA + defined + continued on next symbol
+                                                no_sym++;
+                                                memcpy(&symtab[no_sym], &gst_name[8], 14);  // Extended mode - copy 1 more symbol's worth of chars in the next symbol
+                                                no_sym++;
+                                                break;
+                                            }
                                         case SECT_BSS:
-                                            symtab[no_sym].type = 0x8100; //BSS + defined
-                                            no_sym++;
-                                            break;
+                                            if (SYMTABLE == SYM_DRI || (SYMTABLE==SYM_EXTEND && strlen(gst_name)<=8))
+                                            {
+                                                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+                                                memcpy(symtab[no_sym].name, gst_name, 8);
+                                                symtab[no_sym].type = 0x8100; //BSS + defined
+                                                no_sym++;
+                                                break;
+                                            }
+                                            else
+                                            {
+                                                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+                                                memcpy(symtab[no_sym].name, gst_name, 8);
+                                                symtab[no_sym].type = 0x8248; //BSS + defined + continued on next symbol
+                                                no_sym++;
+                                                memcpy(&symtab[no_sym], &gst_name[8], 14);  // Extended mode - copy 1 more symbol's worth of chars in the next symbol
+                                                no_sym++;
+                                                break;
+                                            }
                                         default:
                                             // Probably do nothing?
                                             break;
