@@ -12,8 +12,7 @@ See elfio.hpp for its license.
 Command line parsing uses simpleopt by Brodie Thiesfield.
 See SimpleOpt.h for its license.
 
-Everything apart from elfio library is released under
-the WTFPL. Probably.
+Everything else is released under the WTFPL. Probably.
 
 */
 
@@ -222,12 +221,6 @@ int _tmain(int argc, TCHAR * argv[])
 
     PRG_HEADER toshead = {0x601a, 0, 0, 0, 0, 0, 0, 0};  // Set up TOS header
 
-    //if ( argc != 3 && argc != 4)
-    //{
-    //    printf( "Usage: brownout <input_elf_file_name> <output_tos_file_name> [PRGFLAGS]\n" );
-    //    return 1;
-    //}
-
     // declare our options parser, pass in the arguments from main
     // as well as our array of valid options.
     CSimpleOpt args(argc, argv, g_rgOptions);
@@ -248,9 +241,6 @@ int _tmain(int argc, TCHAR * argv[])
                 printhelp();
                 return 0;
             }
-            //_tprintf(_T("Option, ID: %d, Text: '%s', Argument: '%s'\n"),
-            //    args.OptionId(), args.OptionText(),
-            //    args.OptionArg() ? args.OptionArg() : _T(""));
             else if (args.OptionId() == OPT_INFILE)
             {
                 std::string s_arg = (std::string)args.OptionArg();
@@ -323,7 +313,7 @@ int _tmain(int argc, TCHAR * argv[])
 
     int no_relocs = 0;
 
-    uint32_t file_offset = 28;                      // Mostly used to calculate the offset of the BSS section inside the .prg
+    uint32_t file_offset = 28;                       // Mostly used to calculate the offset of the BSS section inside the .prg
     ST_SECTION prg_sect[256];                        // Enough? Who knows!
     int section_map[256];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
     int no_sect = 0;
@@ -481,9 +471,7 @@ int _tmain(int argc, TCHAR * argv[])
     {
         psec = reader.sections[i];
         std::string sectname = psec->get_name();                        // Debug
-//        int test1 = sectname.find(".text");                             // Check if this is a text relocation segment
-//        int test2 = sectname.find(".data");                             // Check if this is a data relocation segment
-        if (psec->get_type() == SHT_RELA /*&& (test1 > 0 || test2 > 0)*/)
+        if (psec->get_type() == SHT_RELA)
         {
             Elf64_Addr   offset;
             Elf64_Addr   symbolValue;
@@ -497,6 +485,16 @@ int _tmain(int argc, TCHAR * argv[])
             int sec_size = (int)relocs.get_entries_num();               //Number of entries in the table
             for (Elf_Xword j = 0; j < sec_size; j++)
             {
+                // So, before we forget what variable does what,
+                // let's add an example to illustrate them.
+                // Assume there's this code here:
+                // 2c98:	47f9 0005 6c56 	lea 56c56 <_s_entity_links+0x4>,a3
+                // Obviously the address _s_entity_links+0x4 needs to be
+                // relocated. For this we need:
+                // a) The offset into the section that contains the longword
+                //    to be patched. This is provided by "offset".
+                // b) The address of _s_entity_links. This is provided by "symbolValue".
+                // c) The value to patch into the offset. This is provided by "calcValue.
                 relocs.get_entry(j, offset, symbolValue, symbolName, type, addend, calcValue);
                 switch(type)
                 {
@@ -521,6 +519,22 @@ int _tmain(int argc, TCHAR * argv[])
                     // to change!
                     assert(i >= 0);
                     assert(section_map[i - 1] >= 0);
+                    if ((offset&1)==1)
+                    {
+                        // Now here's an odd one. We are asked to relocate
+                        // a symbol that lies at an odd address. "That's absurd,
+                        // it shouldn't happen" you say? Well guess what, we got
+                        // bit by this exact issue while linking some libraries
+                        // that had some weird exception handling code.
+                        std::cout << "Fatal error: ELF file contains relocation that points "
+                                << "to symbol \"" << symbolName << "\" from an odd address"
+                                << " (" << offset << ")!" << std::endl
+                                << "brownout cannot produce a valid TOS executable under"
+                                << " these circumstances. Please correct the issue."
+                                << std::endl;
+                                exit(0);
+
+                    }
                     tos_relocs[no_relocs].elfsection = i - 1;
                     tos_relocs[no_relocs].tossection = section_map[i - 1];
                     tos_relocs[no_relocs].offset_fixup = (uint32_t)offset;
@@ -543,8 +557,6 @@ int _tmain(int argc, TCHAR * argv[])
                 }
                 default:
                 {
-                    //std::cout << "What the hell kind of type that? "
-                    //    << (int)type << "? Really?" << std::endl;
                     break;
                 }
                 }
@@ -614,8 +626,6 @@ int _tmain(int argc, TCHAR * argv[])
 
     int no_sym = 0;
 
-    // TODO: look into extended format?
-    
     if (SYMTABLE)
     {
 		std::cout << "generating symbol table..." << std::endl;
@@ -852,7 +862,6 @@ int _tmain(int argc, TCHAR * argv[])
                 fwrite(&pad, 1, 1, tosfile);
             }
         }
-        // TODO: Add padding after sections? (hopefully done)
         // TODO2: For 030 executables pad sections to 4 bytes?
     }
 
