@@ -16,8 +16,6 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-// enable to auto-demangle c++ symbols to human-readable for debugging
-#define ENABLE_CPP_SYMBOL_DEMANGLING (1)
 
 #ifdef _MSC_VER
 #define _SCL_SECURE_NO_WARNINGS
@@ -41,9 +39,7 @@ Everything else is released under the WTFPL. Probably.
 #include <SimpleOpt.h>
 #include <map>
 
-#if (ENABLE_CPP_SYMBOL_DEMANGLING)
 void demangle(std::string &name, std::string &demangled);
-#endif
 
 // Little endian to big endian conversion depending on platform
 #if defined(__linux__)
@@ -132,6 +128,7 @@ enum
     OPT_ELF_SEGMENT_DATAS,
     OPT_HELP,
     OPT_DEBUG,
+    OPT_DEMANGLE,
     OPT_EXTEND
 };
 
@@ -143,6 +140,7 @@ CSimpleOpt::SOption g_rgOptions[] =
     { OPT_SYMTABLE,             _T("-s"),     SO_NONE    },
     { OPT_DEBUG,                _T("-d"),     SO_NONE    },
     { OPT_EXTEND,               _T("-x"),     SO_NONE    },
+    { OPT_DEMANGLE,             _T("-f"),     SO_NONE    },
     { OPT_HELP,                 _T("-h"),     SO_NONE    },
     SO_END_OF_OPTIONS                       // END
 };
@@ -165,8 +163,9 @@ using namespace ELFIO;
 void printhelp()
 {
     printf( "Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d]\n"
-            "-s will create a symbol table\n"
-            "-d will turn on verbose debugging.\n");
+            "-s will create a symbol table.\n"
+            "-d will turn on verbose debugging.\n"
+            "-f will turn off C++ symbol demangling (i.e. you get ugly symbol names).\n");
 }
 
     typedef struct
@@ -228,6 +227,7 @@ int _tmain(int argc, TCHAR * argv[])
     char outfile[1024];
     bool DEBUG = false;
     int SYMTABLE = SYM_NONE;
+    bool DEMANGLE = true;
 
     bool gotinput = false, gotoutput = false;
 
@@ -269,6 +269,10 @@ int _tmain(int argc, TCHAR * argv[])
             else if (args.OptionId() == OPT_EXTEND)
             {
                 SYMTABLE = SYM_EXTEND;
+            }
+            else if (args.OptionId() == OPT_DEMANGLE)
+            {
+                DEMANGLE = false;
             }
         }
         else
@@ -657,16 +661,17 @@ int _tmain(int argc, TCHAR * argv[])
                         unsigned char other   = 0;
                         symbols.get_symbol( i, name, value, size, bind, type, section, other );
 
-#if (ENABLE_CPP_SYMBOL_DEMANGLING)
-						if (name.length() > 0)
-						{
-							demangle(name, name);
-							if (DEBUG)
-							{
-								std::cout << "demangled: " << name << std::endl;
-							}
-						}
-#endif
+                        if (DEMANGLE)
+                        {
+                            if (name.length() > 0)
+                            {
+                                demangle(name, name);
+                                if (DEBUG)
+                                {
+                                    std::cout << "demangled: " << name << std::endl;
+                                }
+                            }
+                        }
 
 						strcpy(gst_name, name.substr(0, 24).c_str());
                         // Skip null names
@@ -1064,8 +1069,6 @@ int _tmain(int argc, TCHAR * argv[])
 }
 
 
-#if (ENABLE_CPP_SYMBOL_DEMANGLING)
-
 //#include <string>
 //#include <iostream>
 //#include <windows.h> 
@@ -1220,5 +1223,3 @@ void ReadFromPipe(PROCESS_INFORMATION piProcInfo, std::string &demangled)
 	// captured stdout
 	demangled = out;
 }
-
-#endif
