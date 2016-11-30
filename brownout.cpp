@@ -803,20 +803,56 @@ int _tmain(int argc, TCHAR * argv[])
 							// only try to demangle valid symbols
 							if (name.length() > 0)
 							{
+								if (name[0] == '.')
+								{
+									if (DEBUG)
+									{
+										std::cout << "special: " << name << " with value " << value << std::endl;
+									}
+
+									continue;
+								}
+
 								std::string nameout;
-								demangle(name, nameout);
+								std::string namein(name);
+								demangle(namein, nameout);
+
+								bool demangled =
+									(nameout.length() > 0) &&
+									((namein.length() != nameout.length()) ||
+									(namein.compare(nameout) != 0));
+
 								// if demangle failed, output symbol will be the input symbol
 								// so check for underscore and retry with underscore trimmed ($%^$%^ underscores!!!)
-								if ((name[0] == '_') && (name.compare(nameout) == 0))
+								while (
+									(namein[0] == '_') && 
+									!demangled
+								)
 								{
-									nameout = name.substr(1, name.length() - 1);
-									demangle(nameout, nameout);
-								}
-								name = nameout;
+									namein = namein.substr(1, namein.length() - 1);
+									demangle(namein, nameout);
 
-								if (DEBUG)
+									demangled =
+										(nameout.length() > 0) &&
+										((namein.length() != nameout.length()) ||
+										(namein.compare(nameout) != 0));
+								}
+
+								if (demangled)
 								{
-									std::cout << "demangled: " << name << " with value " << value << std::endl;
+									if (DEBUG)
+									{
+										std::cout << "demangled: " << nameout << " [" << name << "] with value " << value << std::endl;
+									}
+	
+									name = nameout;
+								}
+								else
+								{
+									if (DEBUG)
+									{
+										std::cout << "symbol: " << name << " with value " << value << std::endl;
+									}
 								}
 							}
                         }
@@ -1290,7 +1326,7 @@ PROCESS_INFORMATION CreateChildProcess(std::string &name)
 	//	trim = 1;
 	//std::string trimmed_name = name.substr(trim, name.length() - trim);
 
-	std::string cmd = "m68k-ataribrown-elf-c++filt " + name;// trimmed_name;
+	std::string cmd = "m68k-ataribrown-elf-c++filt --no-verbose --no-params --no-strip-underscore " + name;// trimmed_name;
 
     // Set the text I want to run
     PROCESS_INFORMATION piProcInfo; 
