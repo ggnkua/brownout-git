@@ -1199,6 +1199,34 @@ int _tmain(int argc, TCHAR * argv[])
     return 0;
 }
 
+// Execute program and grab console output
+// Thanks to waqas and jotik for the snippet
+// (from http://stackoverflow.com/a/478960)
+// Hopefully they don't have too large unix beards.
+//
+//#include <cstdio>
+//#include <iostream>
+//#include <memory>
+//#include <stdexcept>
+//#include <string>
+#if defined(_MSC_VER)
+#define POPEN _popen
+#define PCLOSE _pclose
+#else
+#define POPEN popen
+#define PCLOSE pclose
+#endif
+std::string exec(const char* cmd) {
+    char buffer[128];
+    std::string result = "";
+    std::shared_ptr<FILE> pipe(POPEN(cmd, "r"), PCLOSE);
+    if (!pipe) throw std::runtime_error("popen() failed!");
+    while (!feof(pipe.get())) {
+        if (fgets(buffer, 128, pipe.get()) != NULL)
+            result += buffer;
+    }
+    return result;
+}
 
 //#include <string>
 //#include <iostream>
@@ -1216,32 +1244,37 @@ void ReadFromPipe(PROCESS_INFORMATION, std::string &demangled);
 
 void demangle(std::string &name, std::string &demangled)
 {
-    SECURITY_ATTRIBUTES sa; 
-    // Set the bInheritHandle flag so pipe handles are inherited. 
-    sa.nLength = sizeof(SECURITY_ATTRIBUTES); 
-    sa.bInheritHandle = TRUE; 
-    sa.lpSecurityDescriptor = NULL; 
-    // Create a pipe for the child process's STDERR. 
-    if ( ! CreatePipe(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &sa, 0) ) {
-        exit(1); 
-    }
-    // Ensure the read handle to the pipe for STDERR is not inherited.
-    if ( ! SetHandleInformation(g_hChildStd_ERR_Rd, HANDLE_FLAG_INHERIT, 0) ){
-        exit(1);
-    }
-    // Create a pipe for the child process's STDOUT. 
-    if ( ! CreatePipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &sa, 0) ) {
-        exit(1);
-    }
-    // Ensure the read handle to the pipe for STDOUT is not inherited
-    if ( ! SetHandleInformation(g_hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0) ){
-        exit(1); 
-    }
-    // Create the child process. 
-    PROCESS_INFORMATION piProcInfo = CreateChildProcess(name);
+    if (0)
+    {
+        SECURITY_ATTRIBUTES sa; 
+        // Set the bInheritHandle flag so pipe handles are inherited. 
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES); 
+        sa.bInheritHandle = TRUE; 
+        sa.lpSecurityDescriptor = NULL; 
+        // Create a pipe for the child process's STDERR. 
+        if ( ! CreatePipe(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &sa, 0) ) {
+            exit(1); 
+        }
+        // Ensure the read handle to the pipe for STDERR is not inherited.
+        if ( ! SetHandleInformation(g_hChildStd_ERR_Rd, HANDLE_FLAG_INHERIT, 0) ){
+            exit(1);
+        }
+        // Create a pipe for the child process's STDOUT. 
+        if ( ! CreatePipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &sa, 0) ) {
+            exit(1);
+        }
+        // Ensure the read handle to the pipe for STDOUT is not inherited
+        if ( ! SetHandleInformation(g_hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0) ){
+            exit(1); 
+        }
+        // Create the child process. 
+        PROCESS_INFORMATION piProcInfo = CreateChildProcess(name);
 
-    // Read from pipe that is the standard output for child process. 
-    ReadFromPipe(piProcInfo, demangled); 
+        // Read from pipe that is the standard output for child process. 
+        ReadFromPipe(piProcInfo, demangled);
+    }
+
+    demangled=exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
 
 	// filter illegal/annoying stuff out of symbols
 	std::string demangled_filtered;
