@@ -800,14 +800,25 @@ int _tmain(int argc, TCHAR * argv[])
 
                         if (DEMANGLE)
                         {
-						if (name.length() > 0)
-						{
-							demangle(name, name);
-							if (DEBUG)
+							// only try to demangle valid symbols
+							if (name.length() > 0)
 							{
-								std::cout << "demangled: " << name << " with value " << value << std::endl;
+								std::string nameout;
+								demangle(name, nameout);
+								// if demangle failed, output symbol will be the input symbol
+								// so check for underscore and retry with underscore trimmed ($%^$%^ underscores!!!)
+								if ((name[0] == '_') && (name.compare(nameout) == 0))
+								{
+									nameout = name.substr(1, name.length() - 1);
+									demangle(nameout, nameout);
+								}
+								name = nameout;
+
+								if (DEBUG)
+								{
+									std::cout << "demangled: " << name << " with value " << value << std::endl;
+								}
 							}
-						}
                         }
 
 						strcpy(gst_name, name.substr(0, 24).c_str());
@@ -965,10 +976,20 @@ int _tmain(int argc, TCHAR * argv[])
         }
         toshead.PRG_ssize = no_sym * sizeof(GST_SYMBOL);
         //Byte swap table
+		bool extension_follows = false;
+		bool extension = false;
         for (int i = 0; i < no_sym; i++)
         {
-            symtab[i].type = BYTESWAP16(symtab[i].type);
-            symtab[i].value = BYTESWAP32(symtab[i].value);
+			extension_follows = (symtab[i].type == 0x8248);
+
+			if (!extension)
+			{
+				// don't swap string-extension part of extended symbol format
+				symtab[i].type = BYTESWAP16(symtab[i].type);
+				symtab[i].value = BYTESWAP32(symtab[i].value);
+			}
+
+			extension = extension_follows;
         }
     }
 
@@ -1264,8 +1285,12 @@ void demangle(std::string &name, std::string &demangled)
 PROCESS_INFORMATION CreateChildProcess(std::string &name)
 {
 	// remove superfluous underscore
-	std::string trimmed_name = name.substr(1, name.length() - 1);
-	std::string cmd = "m68k-ataribrown-elf-c++filt " + trimmed_name;
+	//int trim = 0;
+	//if (name[0] == '_')
+	//	trim = 1;
+	//std::string trimmed_name = name.substr(trim, name.length() - trim);
+
+	std::string cmd = "m68k-ataribrown-elf-c++filt " + name;// trimmed_name;
 
     // Set the text I want to run
     PROCESS_INFORMATION piProcInfo; 
