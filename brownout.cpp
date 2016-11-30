@@ -41,6 +41,8 @@ Everything else is released under the WTFPL. Probably.
 #include <SimpleOpt.h>
 #include <map>
 
+//#define assert(_x_) { if (!(_x_)) { __asm int 3 }; }
+
 #if (ENABLE_CPP_SYMBOL_DEMANGLING)
 void demangle(std::string &name, std::string &demangled);
 #endif
@@ -313,7 +315,7 @@ int _tmain(int argc, TCHAR * argv[])
 
     int no_relocs = 0;
 
-    uint32_t file_offset = 28;                       // Mostly used to calculate the offset of the BSS section inside the .prg
+    uint32_t file_offset = 28;                      // Mostly used to calculate the offset of the BSS section inside the .prg
     ST_SECTION prg_sect[256];                        // Enough? Who knows!
     int section_map[256];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
     int no_sect = 0;
@@ -334,11 +336,37 @@ int _tmain(int argc, TCHAR * argv[])
 
 	std::cout << "performing section layout..." << std::endl;
 
+	// inject link section in front of everything, which links to real entrypoint
+	// since ELF has its entrypoint in the header
+
+	char injected_link_section[] =
+	{
+		0x60,0x00,
+		0x00,0x00
+	};
+
+	{
+            prg_sect[no_sect].type = SECT_TEXT;
+            prg_sect[no_sect].offset = file_offset;
+            prg_sect[no_sect].size = 4;
+            prg_sect[no_sect].padded_size = 4;
+            prg_sect[no_sect].data = (const char *)injected_link_section;
+			prg_sect[no_sect].sect_start = 0;
+			prg_sect[no_sect].sect_end = 0;
+			
+            file_offset += 4;
+            toshead.PRG_tsize += 4;
+			std::cout << "record [.tos_entrypoint] tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            no_sect++;
+	}
+
     for ( int i = 0; i < sec_num; i++ )
     {
 		if (claimed_sections[i]) continue;
         psec = reader.sections[i];
-		if ((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".boot"))
+		if ((psec->get_type() == SHT_PROGBITS) && 
+			(psec->get_name() == ".boot") &&
+			(psec->get_size() > 0))
         {
 			claimed_sections[i] = true;
             prg_sect[no_sect].type = SECT_TEXT;
@@ -368,15 +396,16 @@ int _tmain(int argc, TCHAR * argv[])
         psec = reader.sections[i];
 		if 
 		(
+			(
 			(psec->get_flags() & SHF_EXECINSTR) ||			
-			//((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".text")) ||
-			//((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".init")) ||
-			//((psec->get_type() == SHT_PROGBITS) && (psec->get_name() == ".fini")) ||
 			(
 				(psec->get_type() == SHT_INIT_ARRAY) ||
 				(psec->get_type() == SHT_PREINIT_ARRAY) ||
 				(psec->get_type() == SHT_FINI_ARRAY)
 			)
+		)
+			&& (psec->get_size() > 0)
+			&& (psec->get_name().find(".debug_") == std::string::npos)
 		)
         {
 			claimed_sections[i] = true;
@@ -406,8 +435,11 @@ int _tmain(int argc, TCHAR * argv[])
     {
 		if (claimed_sections[i]) continue;
         psec = reader.sections[i];
-        if (psec->get_type() == SHT_PROGBITS && (psec->get_flags() & SHF_ALLOC)
-                /*psec->get_name() == ".data"*/)
+        if ((psec->get_type() == SHT_PROGBITS) && 
+			(psec->get_flags() & SHF_ALLOC) &&
+			(psec->get_size() > 0) &&
+			(psec->get_name().find(".debug_") == std::string::npos)
+		)
         {
 			claimed_sections[i] = true;
             prg_sect[no_sect].type = SECT_DATA;
@@ -436,7 +468,10 @@ int _tmain(int argc, TCHAR * argv[])
     {
 		if (claimed_sections[i]) continue;
         psec = reader.sections[i];
-        if (psec->get_type() == SHT_NOBITS)
+        if ((psec->get_type() == SHT_NOBITS) &&
+			(psec->get_size() > 0) &&
+			(psec->get_name().find(".debug_") == std::string::npos)
+		)
         {
 			claimed_sections[i] = true;
             prg_sect[no_sect].type = SECT_BSS;
@@ -451,7 +486,8 @@ int _tmain(int argc, TCHAR * argv[])
             prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
             prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
             prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
-            toshead.PRG_bsize += (uint32_t)psec->get_size();            // Update prg bss size
+			file_offset += (uint32_t)psec->get_size();                  // Update prg offset
+            toshead.PRG_bsize += prg_sect[no_sect].padded_size;            // Update prg bss size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
 			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
             no_sect++;
@@ -459,11 +495,101 @@ int _tmain(int argc, TCHAR * argv[])
     }
 
     // Print some basic info
-    std::cout << "Text size: " << /*hex << */ toshead.PRG_tsize << std::endl <<
-              "Data size:" << toshead.PRG_dsize << std::endl <<
+    std::cout << 
+		"TEXT size: " << toshead.PRG_tsize << std::endl <<
+		"DATA size:" << toshead.PRG_dsize << std::endl <<
               "BSS size:" << toshead.PRG_bsize << std::endl;
 
 	std::cout << "processing relocation entries..." << std::endl;
+
+	uint32_t entrypoint_reference = reader.get_entry();
+
+	{
+
+		if (1)
+		{
+			std::cout << "hunting entrypoint symbol..." << std::endl;
+
+			for (int si = 0; si < sec_num; si++)
+			{
+				psec = reader.sections[si];
+				if (psec->get_type() == SHT_SYMTAB)
+				{
+					symbol_section_accessor symbols( reader, psec );
+
+					Elf_Xword sym_no = symbols.get_symbols_num();
+
+					if (sym_no > 0)
+					{
+						int remaining = 1;
+						for (Elf_Half i = 0; (i < sym_no) && (remaining > 0); ++i)
+						{
+							std::string   name;
+							Elf64_Addr    value   = 0;
+							Elf_Xword     size    = 0;
+							unsigned char bind    = 0;
+							unsigned char type    = 0;
+							Elf_Half      section = 0;
+							unsigned char other   = 0;
+							symbols.get_symbol( i, name, value, size, bind, type, section, other );
+
+							// Check binding type
+							switch (bind)
+							{
+								case STB_LOCAL:
+								case STB_WEAK:
+								case STB_GLOBAL:
+								{
+									// Section 65521 is (probably) the section for absolute labels
+									//if (section == 65521)
+									//{
+									//}
+									//else
+									{
+										if ((name.compare("_start") == 0) ||
+											(name.compare("__start") == 0))
+										{
+											entrypoint_reference = value;
+											remaining--;
+											break;
+										}
+									}
+									break;
+								}
+								default:
+								{
+									// Do nothing?
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// find ELF section this reference belongs to (section with lower bound <= query address)
+		elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(entrypoint_reference);
+		// make sure it refers to a section we actually kept
+		assert(reference_bound != elfsectionboundsmap.end());
+		// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
+		assert(entrypoint_reference >= reference_bound->second.first);
+		// get ELF section index pair<endaddr,[index]>
+		int reference_elfidx = reference_bound->second.second;
+		assert(section_map[reference_elfidx] >= 0);
+		// base address of original elf section bounding the reference
+		uint32_t reference_esa = reader.sections[reference_elfidx]->get_address();
+		// base address of new tos section bounding the reference
+		uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
+
+		entrypoint_reference = entrypoint_reference - reference_esa + reference_tsa;
+
+		uint32_t branch_offset = entrypoint_reference - 2;
+
+		injected_link_section[2] = (branch_offset >> 8) & 0xFF;
+		injected_link_section[3] = (branch_offset >> 0) & 0xFF;
+	}
+
 
     // Perform any relocations that may be needed
     //section *psec_reloc;
@@ -471,7 +597,10 @@ int _tmain(int argc, TCHAR * argv[])
     {
         psec = reader.sections[i];
         std::string sectname = psec->get_name();                        // Debug
-        if (psec->get_type() == SHT_RELA)
+        if (
+		(psec->get_type() == SHT_RELA) &&
+		(psec->get_name().find(".debug_") == std::string::npos)
+	)
         {
             Elf64_Addr   offset;
             Elf64_Addr   symbolValue;
@@ -512,34 +641,41 @@ int _tmain(int argc, TCHAR * argv[])
 								  << " calc:" << calcValue 
 								  << std::endl;
                     }
+
                     // TODO: Ok, we need to mark which section this relocation
                     // is refering to. For now we're going to blindly assume that it
                     // refers to the previous one as they usually go in pairs
                     // (.text / .rela.text). If this is bad then well, this is what
                     // to change!
                     assert(i >= 0);
+					if (section_map[i - 1] >= 0)
+					{
+						assert((offset & 1) == 0);
                     assert(section_map[i - 1] >= 0);
-                    if ((offset&1)==1)
-                    {
-                        // Now here's an odd one. We are asked to relocate
-                        // a symbol that lies at an odd address. "That's absurd,
-                        // it shouldn't happen" you say? Well guess what, we got
-                        // bit by this exact issue while linking some libraries
-                        // that had some weird exception handling code.
-                        std::cout << "Fatal error: ELF file contains relocation that points "
-                                << "to symbol \"" << symbolName << "\" from an odd address"
-                                << " (" << offset << ")!" << std::endl
-                                << "brownout cannot produce a valid TOS executable under"
-                                << " these circumstances. Please correct the issue."
-                                << std::endl;
-                                exit(0);
 
-                    }
+						if ((offset&1)==1)
+						{
+							// Now here's an odd one. We are asked to relocate
+							// a symbol that lies at an odd address. "That's absurd,
+							// it shouldn't happen" you say? Well guess what, we got
+							// bit by this exact issue while linking some libraries
+							// that had some weird exception handling code.
+							std::cout << "Fatal error: ELF file contains relocation that points "
+									<< "to symbol \"" << symbolName << "\" from an odd address"
+									<< " (" << offset << ")!" << std::endl
+									<< "brownout cannot produce a valid TOS executable under"
+									<< " these circumstances. Please correct the issue."
+									<< std::endl;
+									exit(0);
+
+						}
+
                     tos_relocs[no_relocs].elfsection = i - 1;
                     tos_relocs[no_relocs].tossection = section_map[i - 1];
                     tos_relocs[no_relocs].offset_fixup = (uint32_t)offset;
 					tos_relocs[no_relocs].elfsymaddr = calcValue;// symbolValue;
                     no_relocs++;
+					}
                      break;
                 }
                 case R_68K_16:
@@ -663,7 +799,7 @@ int _tmain(int argc, TCHAR * argv[])
 							demangle(name, name);
 							if (DEBUG)
 							{
-								std::cout << "demangled: " << name << std::endl;
+								std::cout << "demangled: " << name << " with value " << value << std::endl;
 							}
 						}
 #endif
@@ -877,7 +1013,7 @@ int _tmain(int argc, TCHAR * argv[])
 	// shove all reloc indices in a map, using the address as the sort key
 	// (equivalent to a tree-insert-sort)
 	if (no_relocs > 0)
-		std::cout << "sorting relocations..." << std::endl;
+		std::cout << "sorting " << no_relocs << " relocations..." << std::endl;
 
 	typedef std::map<uint32_t, int> relocmap_t;
 	relocmap_t relocmap;
@@ -930,11 +1066,13 @@ int _tmain(int argc, TCHAR * argv[])
 			if (1)
 			{
 				// extract the original reloc data
-				fseek(tosfile, (long)tosreloc_file, 0);
-				fread(relo_data, 1, 4, tosfile);
-				uint32_t reference = BYTESWAP32(relo_data[0]);
+				//fseek(tosfile, (long)tosreloc_file, 0);
+				//fread(relo_data, 1, 4, tosfile);
+				//uint32_t freference = BYTESWAP32(relo_data[0]);
 
-				reference = tos_relocs[r].elfsymaddr;
+				uint32_t reference = tos_relocs[r].elfsymaddr;
+
+				{
 
 				// find ELF section this reference belongs to (section with lower bound <= query address)
 				elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(reference);
@@ -950,25 +1088,6 @@ int _tmain(int argc, TCHAR * argv[])
 				// base address of new tos section bounding the reference
 				uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
 
-/*
-// we don't need this unless we have to relocate XX.l(PC) relative between two sections \o/
-				uint32_t relocsite = tos_relocs[r].offset_fixup;
-				// find ELF section this reference belongs to (sectirefeon with lower bound <= query address)
-				elfsectionboundsmap_t::iterator relocsite_bound = elfsectionboundsmap.upper_bound(relocsite);
-				// make sure it refers to a section we actually kept
-				assert(relocsite_bound != elfsectionboundsmap.end());
-				// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
-				assert(relocsite >= relocsite_bound->second.first);
-				// get ELF section index pair<endaddr,[index]>
-				int relocsite_elfidx = relocsite_bound->second.second;
-				assert(section_map[relocsite_elfidx] >= 0);
-				// base address of original elf section bounding the reference
-				uint32_t relocsite_esa = reader.sections[relocsite_elfidx]->get_address();
-				// base address of new tos section bounding the reference
-				uint32_t relocsite_tsa = prg_sect[section_map[relocsite_elfidx]].offset - 28;
-*/
-
-
 				if (DEBUG)
 				{
 					printf("reloc references: ea:%x esec:%s ess:%x ese:%x\n",
@@ -981,17 +1100,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 				// adjust the relocation to compensate for section rearrangement
 				reference = reference - reference_esa + reference_tsa;
-				
-				//if (relocsite_elfidx == reference_elfidx)
-				//{
-				//	// if the relocation refers to same section, apply relocsite adjustment to reference
-				//	reference = reference - relocsite_esa + relocsite_tsa;
-				//}
-				//else
-				//{
-				//	// if the relocation crosses section bounaries, apply adjustment to reference
-				//	reference = reference - reference_esa + reference_tsa;
-				//}
+				}
 
 				// store the updated reloc data
 				relo_data[0] = BYTESWAP32(reference);
@@ -1152,7 +1261,7 @@ PROCESS_INFORMATION CreateChildProcess(std::string &name)
 {
 	// remove superfluous underscore
 	std::string trimmed_name = name.substr(1, name.length() - 1);
-	std::string cmd = "m68k-ossom-elf-c++filt " + trimmed_name;
+	std::string cmd = "m68k-ataribrown-elf-c++filt " + trimmed_name;
 
     // Set the text I want to run
     PROCESS_INFORMATION piProcInfo; 
