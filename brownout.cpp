@@ -783,79 +783,107 @@ int _tmain(int argc, TCHAR * argv[])
                 if ( sym_no > 0 )
                 {
 
-                    for ( Elf_Half i = 0; i < sym_no; ++i )
-                    {
-                        char gst_name[25] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-                                             0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-                                             0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-                                             0x0};
-                        std::string   name;
-                        Elf64_Addr    value   = 0;
-                        Elf_Xword     size    = 0;
-                        unsigned char bind    = 0;
-                        unsigned char type    = 0;
-                        Elf_Half      section = 0;
-                        unsigned char other   = 0;
-                        symbols.get_symbol( i, name, value, size, bind, type, section, other );
+					for (Elf_Half i = 0; i < sym_no; ++i)
+					{
+						char gst_name[25] = { 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+							0x0 };
+						std::string   name;
+						Elf64_Addr    value = 0;
+						Elf_Xword     size = 0;
+						unsigned char bind = 0;
+						unsigned char type = 0;
+						Elf_Half      section = 0;
+						unsigned char other = 0;
+						symbols.get_symbol(i, name, value, size, bind, type, section, other);
 
-                        if (DEMANGLE)
-                        {
+						if (DEMANGLE)
+						{
+							bool wasmangled = false;
 							// only try to demangle valid symbols
 							if (name.length() > 0)
 							{
-								if (name[0] == '.')
+								if (name.find("_Z") < 2)
 								{
-									if (DEBUG)
-									{
-										std::cout << "special: " << name << " with value " << value << std::endl;
-									}
 
-									continue;
-								}
-
-								std::string nameout;
-								std::string namein(name);
-								demangle(namein, nameout);
-
-								bool demangled =
-									(nameout.length() > 0) &&
-									((namein.length() != nameout.length()) ||
-									(namein.compare(nameout) != 0));
-
-								// if demangle failed, output symbol will be the input symbol
-								// so check for underscore and retry with underscore trimmed ($%^$%^ underscores!!!)
-								while (
-									(namein[0] == '_') && 
-									!demangled
-								)
-								{
-									namein = namein.substr(1, namein.length() - 1);
+									std::string nameout;
+									std::string namein(name);
 									demangle(namein, nameout);
 
-									demangled =
+									bool demangled =
 										(nameout.length() > 0) &&
 										((namein.length() != nameout.length()) ||
 										(namein.compare(nameout) != 0));
+
+									// if demangle failed, output symbol will be the input symbol
+									// so check for underscore and retry with underscore trimmed ($%^$%^ underscores!!!)
+									while (
+										(namein[0] == '_') &&
+										!demangled
+										)
+									{
+										namein = namein.substr(1, namein.length() - 1);
+										demangle(namein, nameout);
+
+										demangled =
+											(nameout.length() > 0) &&
+											((namein.length() != nameout.length()) ||
+											(namein.compare(nameout) != 0));
+									}
+
+									if (demangled)
+									{
+										if (DEBUG)
+										{
+											std::cout << "demangled: " << nameout << " [" << name << "] with value " << value << std::endl;
+										}
+
+										name = nameout;
+										wasmangled = true;
+									}
 								}
 
-								if (demangled)
+								if (DEBUG)
 								{
-									if (DEBUG)
-									{
-										std::cout << "demangled: " << nameout << " [" << name << "] with value " << value << std::endl;
-									}
-	
-									name = nameout;
-								}
-								else
-								{
-									if (DEBUG)
-									{
+									if (!wasmangled)
 										std::cout << "symbol: " << name << " with value " << value << std::endl;
-									}
 								}
 							}
-                        }
+						}
+
+						{
+							// filter illegal/annoying stuff out of symbols
+							std::string name_filtered;
+							for (std::string::iterator it = name.begin(); it != name.end(); it++)
+							{
+								char c = *it;
+								if ((c >= 32) && (c < 127))
+								{
+									switch (c)
+									{
+									case ' ': c = 0; break;
+									//case '!': c = 0; break;
+									case '"': c = 0; break;
+									//case '#': c = 0; break;
+									//case '$': c = 0; break;
+									//case '%': c = 0; break;
+									//case '\'': c = 0; break;
+									case '`': c = 0; break;
+									//case '/': c = 0; break;
+									//case '\\': c = 0; break;
+									//case ';': c = 0; break;
+									//case '?': c = 0; break;
+									//case '@': c = 0; break;
+									default:
+										break;
+									}
+									if (c)
+										name_filtered.push_back(c);
+								}
+							}
+							name = name_filtered;
+						}
 
 						strcpy(gst_name, name.substr(0, 24).c_str());
                         // Skip null names
@@ -1240,9 +1268,9 @@ int _tmain(int argc, TCHAR * argv[])
 // (from http://stackoverflow.com/a/478960)
 // Hopefully they don't have too large unix beards.
 //
-//#include <cstdio>
-//#include <iostream>
-//#include <memory>
+#include <cstdio>
+#include <iostream>
+#include <memory>
 //#include <stdexcept>
 //#include <string>
 #if defined(_MSC_VER)
@@ -1312,38 +1340,11 @@ void demangle(std::string &name, std::string &demangled)
 
     demangled=exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
 
-	// filter illegal/annoying stuff out of symbols
-	std::string demangled_filtered;
-	for (std::string::iterator it = demangled.begin(); it != demangled.end(); it++)
-	{
-		char c = *it;
-		if ((c >= 32) && (c < 127))
-		{
-			switch (c)
-			{
-			case ' ': c = 0; break;
-			case '!': c = 0; break;
-			case '"': c = 0; break;
-			case '#': c = 0; break;
-			case '$': c = 0; break;
-			case '%': c = 0; break;
-			case '\'': c = 0; break;
-			case '`': c = 0; break;
-			case '.': c = 0; break;
-			case '/': c = 0; break;
-			case '\\': c = 0; break;
-			case ';': c = 0; break;
-			case '?': c = 0; break;
-			case '@': c = 0; break;
-			default:
-				break;
-			}
-			if (c)
-				demangled_filtered.push_back(c);
-		}
-	}
-	demangled = demangled_filtered;
-	
+	// trim control characters from response
+	if (demangled.length() > 0)
+		while ((demangled.back() == '\n') || (demangled.back() == '\r') || (demangled.back() == ' '))
+			demangled.pop_back();
+
     // The remaining open handles are cleaned up when this process terminates. 
     // To avoid resource leaks in a larger application, 
     //   close handles explicitly.
@@ -1359,7 +1360,7 @@ PROCESS_INFORMATION CreateChildProcess(std::string &name)
 	//	trim = 1;
 	//std::string trimmed_name = name.substr(trim, name.length() - trim);
 
-	std::string cmd = "m68k-ataribrown-elf-c++filt --no-verbose --no-params --no-strip-underscore " + name;// trimmed_name;
+	std::string cmd = "m68k-ataribrown-elf-c++filt -p " + name;// trimmed_name;
 
     // Set the text I want to run
     PROCESS_INFORMATION piProcInfo; 
