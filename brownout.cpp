@@ -1292,6 +1292,7 @@ std::string exec(const char* cmd) {
     return result;
 }
 
+#if 0
 //#include <string>
 //#include <iostream>
 //#include <windows.h> 
@@ -1305,9 +1306,11 @@ HANDLE g_hChildStd_ERR_Wr = NULL;
 
 PROCESS_INFORMATION CreateChildProcess(std::string &name); 
 void ReadFromPipe(PROCESS_INFORMATION, std::string &demangled); 
+#endif
 
 void demangle(std::string &name, std::string &demangled)
 {
+#if 0
     if (0)
     {
         SECURITY_ATTRIBUTES sa; 
@@ -1337,6 +1340,7 @@ void demangle(std::string &name, std::string &demangled)
         // Read from pipe that is the standard output for child process. 
         ReadFromPipe(piProcInfo, demangled);
     }
+#endif
 
     demangled=exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
 
@@ -1350,6 +1354,7 @@ void demangle(std::string &name, std::string &demangled)
     //   close handles explicitly.
 } 
 
+#if 0
 // Create a child process that uses the previously created pipes
 //  for STDERR and STDOUT.
 PROCESS_INFORMATION CreateChildProcess(std::string &name)
@@ -1428,3 +1433,5 @@ void ReadFromPipe(PROCESS_INFORMATION piProcInfo, std::string &demangled)
 	// captured stdout
 	demangled = out;
 }
+
+#endif
