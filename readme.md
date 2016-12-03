@@ -6,6 +6,14 @@ Uses the *elfio* library by Serge Lamikhov-Center to do the
 heavy lifting that is ELF parsing. See elfio.hpp for its
 license.
 
-Everything apart from elfio library is released under
-the WTFPL. Probably.
+Command line parsing uses *simpleopt* by Brodie Thiesfield.
+See SimpleOpt.h for its license.
 
+Everything else is released under the WTFPL. Probably.
+
+
+Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d] [-x]
+            -s will create a symbol table.
+            -d will turn on verbose debugging.
+            -x will create an extended symbol table.
+            -f will turn off C++ symbol demangling (i.e. you get ugly symbol names).
