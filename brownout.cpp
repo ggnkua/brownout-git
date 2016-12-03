@@ -21,8 +21,6 @@ Everything else is released under the WTFPL. Probably.
 #define _SCL_SECURE_NO_WARNINGS
 #define ELFIO_NO_INTTYPES
 
-//#include <stdio.h>
-
 // Yes yes dear, fopen is insecure, blah blah. We know.
 // Don't bug us about it.
 #define _CRT_SECURE_NO_WARNINGS
@@ -38,6 +36,9 @@ Everything else is released under the WTFPL. Probably.
 #include <elfio/elfio.hpp>
 #include <SimpleOpt.h>
 #include <map>
+#include <cstdio>
+#include <iostream>
+#include <memory>
 
 // better at catching things early inside VS debugger
 //#define assert(_x_) { if (!(_x_)) { __asm int 3 }; }
@@ -150,14 +151,14 @@ CSimpleOpt::SOption g_rgOptions[] =
 
 typedef struct
 {
-    uint16_t    PRG_magic;  // This WORD contains the magic value (0x601A).
-    uint32_t    PRG_tsize;  // This LONG contains the size of the TEXT segment in bytes.
-    uint32_t    PRG_dsize;  // This LONG contains the size of the DATA segment in bytes.
-    uint32_t    PRG_bsize;  // This LONG contains the size of the BSS segment in bytes.
-    uint32_t    PRG_ssize;  // This LONG contains the size of the symbol table in bytes.
-    uint32_t    PRG_res1;   // This LONG is unused and is currently reserved.
-    uint32_t    PRGFLAGS;   // This LONG contains flags which define certain process characteristics (as defined below).
-    uint16_t    ABSFLAG;    // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
+    uint16_t    PRG_magic;          // This WORD contains the magic value (0x601A).
+    uint32_t    PRG_tsize;          // This LONG contains the size of the TEXT segment in bytes.
+    uint32_t    PRG_dsize;          // This LONG contains the size of the DATA segment in bytes.
+    uint32_t    PRG_bsize;          // This LONG contains the size of the BSS segment in bytes.
+    uint32_t    PRG_ssize;          // This LONG contains the size of the symbol table in bytes.
+    uint32_t    PRG_res1;           // This LONG is unused and is currently reserved.
+    uint32_t    PRGFLAGS;           // This LONG contains flags which define certain process characteristics (as defined below).
+    uint16_t    ABSFLAG;            // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
 } PRG_HEADER;
 
 
@@ -174,14 +175,14 @@ void printhelp()
 
 typedef struct
 {
-    uint32_t offset_fixup;					// Offset inside the section
+    uint32_t offset_fixup;			// Offset inside the section
     uint32_t elfsymaddr;
-    int elfsection;								// Which section we're on
+    int elfsection;					// Which section we're on
     int tossection;
 
 } TOS_RELOC;
 
-TOS_RELOC tos_relocs[100 * 1024];                // Enough? Who knows!
+TOS_RELOC tos_relocs[100 * 1024];   // Enough? Who knows!
 
 typedef struct
 {
@@ -190,17 +191,17 @@ typedef struct
     uint32_t value;
 } GST_SYMBOL;
 
-GST_SYMBOL symtab[100 * 1024];  // Enough? Who knows!
+GST_SYMBOL symtab[100 * 1024];      // Enough? Who knows!
 
 typedef struct
 {
-    int         type;       // Type of section (see enum below)
-    uint32_t    offset;     // Offset of section inside the TOS PRG
-    uint32_t    size;       // Original size of section
-    uint32_t    padded_size;    // Size of section with even padding
-    const char  *data;      // Points to the start of the actual section data
-    uint32_t    sect_start; // address of section start inside the elf
-    uint32_t    sect_end;   // address of section end inside the elf
+    int         type;               // Type of section (see enum below)
+    uint32_t    offset;             // Offset of section inside the TOS PRG
+    uint32_t    size;               // Original size of section
+    uint32_t    padded_size;        // Size of section with even padding
+    const char  *data;              // Points to the start of the actual section data
+    uint32_t    sect_start;         // address of section start inside the elf
+    uint32_t    sect_end;           // address of section end inside the elf
 } ST_SECTION;
 
 enum
@@ -321,9 +322,9 @@ int _tmain(int argc, TCHAR * argv[])
 
     int no_relocs = 0;
 
-    uint32_t file_offset = 28;                       // Mostly used to calculate the offset of the BSS section inside the .prg
-    ST_SECTION prg_sect[256];                        // Enough? Who knows!
-    int section_map[256];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
+    uint32_t file_offset = 28;      // Mostly used to calculate the offset of the BSS section inside the .prg
+    ST_SECTION prg_sect[256];       // Enough? Who knows!
+    int section_map[256];           // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
     int no_sect = 0;
     bool claimed_sections[256];
 
@@ -335,10 +336,6 @@ int _tmain(int argc, TCHAR * argv[])
     }
 
     section *psec;
-
-    // TODO: refactor the following 3 loops into 1 by
-    // making prg_sect [32][3] and iterating once again
-    // to determine offsets into file?
 
     std::cout << "performing section layout..." << std::endl;
 
@@ -493,7 +490,7 @@ int _tmain(int argc, TCHAR * argv[])
             prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
             prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
             file_offset += (uint32_t)psec->get_size();                  // Update prg offset
-            toshead.PRG_bsize += prg_sect[no_sect].padded_size;            // Update prg bss size
+            toshead.PRG_bsize += prg_sect[no_sect].padded_size;         // Update prg bss size
             section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
             std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
             no_sect++;
@@ -616,7 +613,6 @@ int _tmain(int argc, TCHAR * argv[])
             Elf_Sxword   calcValue;
             relocation_section_accessor relocs(reader, psec);
 
-            //int sec_size=(int)psec->get_size()/sizeof(Elf32_Rela);    //Number of entries in the table
             int sec_size = (int)relocs.get_entries_num();               //Number of entries in the table
             for (Elf_Xword j = 0; j < sec_size; j++)
             {
@@ -912,13 +908,13 @@ int _tmain(int argc, TCHAR * argv[])
                                 if (SYMTABLE == SYM_DRI || (SYMTABLE == SYM_EXTEND && strlen(gst_name) <= 8))
                                 {
                                     memcpy(symtab[no_sym].name, gst_name, 8);
-                                    symtab[no_sym].type = 0x2000;           // GLOBAL
+                                    symtab[no_sym].type = 0x2000;       // GLOBAL
                                     symtab[no_sym].value = (uint32_t)value;
                                 }
                                 else
                                 {
                                     memcpy(symtab[no_sym].name, gst_name, 8);
-                                    symtab[no_sym].type = 0x2048;           // GLOBAL + continued on next symbol
+                                    symtab[no_sym].type = 0x2048;       // GLOBAL + continued on next symbol
                                     symtab[no_sym].value = (uint32_t)value;
                                     no_sym++;
                                     memcpy(&symtab[no_sym], &gst_name[8], 14);  // Extended mode - copy 1 more symbol's worth of chars in the next symbol
@@ -1048,7 +1044,7 @@ int _tmain(int argc, TCHAR * argv[])
             }
         }
         toshead.PRG_ssize = no_sym * sizeof(GST_SYMBOL);
-        //Byte swap table
+        // Byte swap table
         bool extension_follows = false;
         bool extension = false;
         for (int i = 0; i < no_sym; i++)
@@ -1280,11 +1276,7 @@ int _tmain(int argc, TCHAR * argv[])
 // (from http://stackoverflow.com/a/478960)
 // Hopefully they don't have too large unix beards.
 //
-#include <cstdio>
-#include <iostream>
-#include <memory>
-//#include <stdexcept>
-//#include <string>
+
 #if defined(_MSC_VER)
 #define POPEN _popen
 #define PCLOSE _pclose
@@ -1306,59 +1298,8 @@ std::string exec(const char* cmd)
     return result;
 }
 
-#if 0
-//#include <string>
-//#include <iostream>
-//#include <windows.h>
-//#include <stdio.h>
-//#pragma warning( disable : 4800 ) // stupid warning about bool
-#define BUFSIZE 4096
-HANDLE g_hChildStd_OUT_Rd = NULL;
-HANDLE g_hChildStd_OUT_Wr = NULL;
-HANDLE g_hChildStd_ERR_Rd = NULL;
-HANDLE g_hChildStd_ERR_Wr = NULL;
-
-PROCESS_INFORMATION CreateChildProcess(std::string &name);
-void ReadFromPipe(PROCESS_INFORMATION, std::string &demangled);
-#endif
-
 void demangle(std::string &name, std::string &demangled)
 {
-#if 0
-    if (0)
-    {
-        SECURITY_ATTRIBUTES sa;
-        // Set the bInheritHandle flag so pipe handles are inherited.
-        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-        sa.bInheritHandle = TRUE;
-        sa.lpSecurityDescriptor = NULL;
-        // Create a pipe for the child process's STDERR.
-        if ( ! CreatePipe(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &sa, 0) )
-        {
-            exit(1);
-        }
-        // Ensure the read handle to the pipe for STDERR is not inherited.
-        if ( ! SetHandleInformation(g_hChildStd_ERR_Rd, HANDLE_FLAG_INHERIT, 0) )
-        {
-            exit(1);
-        }
-        // Create a pipe for the child process's STDOUT.
-        if ( ! CreatePipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &sa, 0) )
-        {
-            exit(1);
-        }
-        // Ensure the read handle to the pipe for STDOUT is not inherited
-        if ( ! SetHandleInformation(g_hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0) )
-        {
-            exit(1);
-        }
-        // Create the child process.
-        PROCESS_INFORMATION piProcInfo = CreateChildProcess(name);
-
-        // Read from pipe that is the standard output for child process.
-        ReadFromPipe(piProcInfo, demangled);
-    }
-#endif
 
     demangled = exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
 
@@ -1367,93 +1308,4 @@ void demangle(std::string &name, std::string &demangled)
         while ((demangled.back() == '\n') || (demangled.back() == '\r') || (demangled.back() == ' '))
             demangled.pop_back();
 
-    // The remaining open handles are cleaned up when this process terminates.
-    // To avoid resource leaks in a larger application,
-    //   close handles explicitly.
 }
-
-#if 0
-// Create a child process that uses the previously created pipes
-//  for STDERR and STDOUT.
-PROCESS_INFORMATION CreateChildProcess(std::string &name)
-{
-    // remove superfluous underscore
-    //int trim = 0;
-    //if (name[0] == '_')
-    //	trim = 1;
-    //std::string trimmed_name = name.substr(trim, name.length() - trim);
-
-    std::string cmd = "m68k-ataribrown-elf-c++filt -p " + name;// trimmed_name;
-
-    // Set the text I want to run
-    PROCESS_INFORMATION piProcInfo;
-    STARTUPINFO siStartInfo;
-    bool bSuccess = FALSE;
-
-    // Set up members of the PROCESS_INFORMATION structure.
-    ZeroMemory( &piProcInfo, sizeof(PROCESS_INFORMATION) );
-
-    // Set up members of the STARTUPINFO structure.
-    // This structure specifies the STDERR and STDOUT handles for redirection.
-    ZeroMemory( &siStartInfo, sizeof(STARTUPINFO) );
-    siStartInfo.cb = sizeof(STARTUPINFO);
-    siStartInfo.hStdError = g_hChildStd_ERR_Wr;
-    siStartInfo.hStdOutput = g_hChildStd_OUT_Wr;
-    siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
-
-    // Create the child process.
-    bSuccess = CreateProcess(
-                   NULL,
-                   (char*)cmd.c_str(),     // command line
-                   NULL,          // process security attributes
-                   NULL,          // primary thread security attributes
-                   TRUE,          // handles are inherited
-                   0,             // creation flags
-                   NULL,          // use parent's environment
-                   NULL,          // use parent's current directory
-                   &siStartInfo,  // STARTUPINFO pointer
-                   &piProcInfo);  // receives PROCESS_INFORMATION
-    CloseHandle(g_hChildStd_ERR_Wr);
-    CloseHandle(g_hChildStd_OUT_Wr);
-    // If an error occurs, exit the application.
-    if ( ! bSuccess )
-    {
-        exit(1);
-    }
-    return piProcInfo;
-}
-
-// Read output from the child process's pipe for STDOUT
-// and write to the parent process's pipe for STDOUT.
-// Stop when there is no more data.
-void ReadFromPipe(PROCESS_INFORMATION piProcInfo, std::string &demangled)
-{
-    DWORD dwRead;
-    CHAR chBuf[BUFSIZE];
-    bool bSuccess = FALSE;
-    std::string out = "", err = "";
-    for (;;)
-    {
-        bSuccess = ReadFile( g_hChildStd_OUT_Rd, chBuf, BUFSIZE, &dwRead, NULL);
-        if( ! bSuccess || dwRead == 0 ) break;
-
-        std::string s(chBuf, dwRead);
-        out += s;
-    }
-    dwRead = 0;
-    for (;;)
-    {
-        bSuccess = ReadFile( g_hChildStd_ERR_Rd, chBuf, BUFSIZE, &dwRead, NULL);
-        if( ! bSuccess || dwRead == 0 ) break;
-
-        std::string s(chBuf, dwRead);
-        err += s;
-
-    }
-
-    // captured stdout
-    demangled = out;
-}
-
-#endif
-
