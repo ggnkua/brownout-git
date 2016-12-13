@@ -32,34 +32,12 @@ Everything else is released under the WTFPL. Probably.
 #pragma pack(2)
 #endif
 
-#include <assert.h>
-#include <iostream>
-#include <elfio/elfio_dump.hpp>
-#include <elfio/elfio.hpp>
-#include <SimpleOpt.h>
-#include <map>
-
-// better at catching things early inside VS debugger
-//#define assert(_x_) { if (!(_x_)) { __asm int 3 }; }
-
-void demangle(std::string &name, std::string &demangled);
-
-// Little endian to big endian conversion depending on platform
-#if defined(__linux__)
-    #include <endian.h>
-    #define BYTESWAP32 htobe32
-    #define BYTESWAP16 htobe16
-#endif
-#ifdef _MSC_VER
-    #include <stdlib.h>
-    #define BYTESWAP16 _byteswap_ushort
-    #define BYTESWAP32 _byteswap_ulong
-#endif
-
 // M68k defines lifted from bintools 2.27.
 // Added here instead of elftypes.hpp so the
 // elfio lib won't need any modifying should
 // we ever need to update to a newer version.
+
+// note: elfio_relocation.hpp contained x86 elf reloc handling only - has been modified to use these instead
 
 #define R_68K_NONE           0
 #define R_68K_32             1
@@ -104,6 +82,31 @@ void demangle(std::string &name, std::string &demangled);
 #define R_68K_TLS_DTPMOD32  40
 #define R_68K_TLS_DTPREL32  41
 #define R_68K_TLS_TPREL32   42
+
+#include <assert.h>
+#include <iostream>
+#include <elfio/elfio_dump.hpp>
+#include <elfio/elfio.hpp>
+#include <SimpleOpt.h>
+#include <map>
+
+// better at catching things early inside VS debugger
+#define assert(_x_) { if (!(_x_)) { __asm int 3 }; }
+
+void demangle(std::string &name, std::string &demangled);
+
+// Little endian to big endian conversion depending on platform
+#if defined(__linux__)
+    #include <endian.h>
+    #define BYTESWAP32 htobe32
+    #define BYTESWAP16 htobe16
+#endif
+#ifdef _MSC_VER
+    #include <stdlib.h>
+    #define BYTESWAP16 _byteswap_ushort
+    #define BYTESWAP32 _byteswap_ulong
+#endif
+
 
 #if defined(_MSC_VER)
 # include <windows.h>
@@ -174,13 +177,16 @@ void printhelp()
     typedef struct
     {
 		uint32_t offset_fixup;					// Offset inside the section
-		uint32_t elfsymaddr;
-        int elfsection;								// Which section we're on
-		int tossection;
+		uint32_t elfcalcvalue;
+        short elfsection;						// Which section we're on
+		short tossection;
+		std::string elfsymname;
+		bool absolute;
+		short type;
 
     } TOS_RELOC;
 
-TOS_RELOC tos_relocs[100 * 1024];                // Enough? Who knows!
+TOS_RELOC tos_relocs[64 * 1024];                // Enough? Who knows!
 
 typedef struct
 {
@@ -507,7 +513,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 	std::cout << "processing relocation entries..." << std::endl;
 
-	uint32_t entrypoint_reference = reader.get_entry();
+	uint32_t elf_entrypoint = 1;// reader.get_entry();
 
 	{
 
@@ -551,10 +557,10 @@ int _tmain(int argc, TCHAR * argv[])
 									//}
 									//else
 									{
-										if ((name.compare("_start") == 0) ||
-											(name.compare("__start") == 0))
+										if ((name.compare("__start") == 0) ||
+											(name.compare("_start") == 0))
 										{
-											entrypoint_reference = value;
+											elf_entrypoint = value;
 											remaining--;
 											break;
 										}
@@ -573,12 +579,23 @@ int _tmain(int argc, TCHAR * argv[])
 			}
 		}
 
+		if (elf_entrypoint == 1)
+		{
+			std::cerr << "error: entrypoint (_start symbol) could not be found. can't link!" << std::endl;
+			exit(1);
+		}
+
 		// find ELF section this reference belongs to (section with lower bound <= query address)
-		elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(entrypoint_reference);
+		elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(elf_entrypoint);
+		// check for references to ends of sections where subsequent section (if any) doesn't immediately start.
+		// this handles edge cases like _bss_end which are not included in the section begin-end range
+		// note: shouldn't ever happen here but handled for consistency anyway.
+		if (reference_bound == elfsectionboundsmap.end())
+			reference_bound = elfsectionboundsmap.upper_bound(elf_entrypoint-1);
 		// make sure it refers to a section we actually kept
 		assert(reference_bound != elfsectionboundsmap.end());
 		// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
-		assert(entrypoint_reference >= reference_bound->second.first);
+		assert(elf_entrypoint >= reference_bound->second.first);
 		// get ELF section index pair<endaddr,[index]>
 		int reference_elfidx = reference_bound->second.second;
 		assert(section_map[reference_elfidx] >= 0);
@@ -587,9 +604,17 @@ int _tmain(int argc, TCHAR * argv[])
 		// base address of new tos section bounding the reference
 		uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
 
-		entrypoint_reference = entrypoint_reference - reference_esa + reference_tsa;
+		uint32_t tos_entrypoint = elf_entrypoint- reference_esa + reference_tsa;
 
-		uint32_t branch_offset = entrypoint_reference - 2;
+		printf("entrypoint located at eVA:$%06x (tVA:$%06x)\n", elf_entrypoint, tos_entrypoint);
+
+		uint32_t branch_offset = tos_entrypoint - 2;
+
+		if (branch_offset >= 32768)
+		{
+			std::cerr << "error: entrypoint (_start symbol) is >= 32k into program image. can't link!" << std::endl;
+			exit(1);
+		}
 
 		injected_link_section[2] = (branch_offset >> 8) & 0xFF;
 		injected_link_section[3] = (branch_offset >> 0) & 0xFF;
@@ -603,9 +628,9 @@ int _tmain(int argc, TCHAR * argv[])
         psec = reader.sections[i];
         std::string sectname = psec->get_name();                        // Debug
         if (
-		(psec->get_type() == SHT_RELA) &&
-		(psec->get_name().find(".debug_") == std::string::npos)
-	)
+			(psec->get_type() == SHT_RELA) &&
+			(psec->get_name().find(".debug_") == std::string::npos)
+		)
         {
             Elf64_Addr   offset;
             Elf64_Addr   symbolValue;
@@ -633,73 +658,103 @@ int _tmain(int argc, TCHAR * argv[])
                 switch(type)
                 {
                 case R_68K_32:
-                {
-                    if (DEBUG)
-                    {
-                        std::cout << "Reloc " << j 
-								  << " in section " << i << " [" << psec->get_name() << "]"
-								  << " offset:" << offset 
-								  << " symval:" << symbolValue 
-								  << " sym:" << symbolName
-								  << " type:" << type 
-								  << " addend:" << addend
-								  << " calc:" << calcValue 
-								  << std::endl;
-                    }
-
-                    // TODO: Ok, we need to mark which section this relocation
-                    // is refering to. For now we're going to blindly assume that it
-                    // refers to the previous one as they usually go in pairs
-                    // (.text / .rela.text). If this is bad then well, this is what
-                    // to change!
-                    assert(i >= 0);
-					if (section_map[i - 1] >= 0)
-					{
-						assert((offset & 1) == 0);
-                    assert(section_map[i - 1] >= 0);
-
-                    if ((offset&1)==1)
-                    {
-                        // Now here's an odd one. We are asked to relocate
-                        // a symbol that lies at an odd address. "That's absurd,
-                        // it shouldn't happen" you say? Well guess what, we got
-                        // bit by this exact issue while linking some libraries
-                        // that had some weird exception handling code.
-                        std::cout << "Fatal error: ELF file contains relocation that points "
-                                << "to symbol \"" << symbolName << "\" from an odd address"
-                                << " (" << offset << ")!" << std::endl
-                                << "brownout cannot produce a valid TOS executable under"
-                                << " these circumstances. Please correct the issue."
-                                << std::endl;
-                                exit(0);
-
-                    }
-
-                    tos_relocs[no_relocs].elfsection = i - 1;
-                    tos_relocs[no_relocs].tossection = section_map[i - 1];
-                    tos_relocs[no_relocs].offset_fixup = (uint32_t)offset;
-					tos_relocs[no_relocs].elfsymaddr = calcValue;// symbolValue;
-                    no_relocs++;
-					}
-                     break;
-                }
-                case R_68K_16:
-                {
-                    std::cout << "Section" << i <<
-                              ": 16-bit relocations not allowed (apparently)"
-                              << std::endl;
-                    break;
-                }
+                case R_68K_PC32:
                 case R_68K_PC16:
-                {
-                    std::cout << "Section" << i <<
-                              ": 16-bit relocations not allowed (apparently)"
-                              << std::endl;                    break;
-                }
-                default:
-                {
-                    break;
-                }
+                case R_68K_PC8:
+					{
+						if (DEBUG)
+						{
+							// get reloc type string for printing
+							std::string typestr;
+							switch (type)
+							{
+							case R_68K_32:		typestr = "32"; break;
+							case R_68K_PC32:	typestr = "PC32"; break;
+							case R_68K_PC16:	typestr = "PC16"; break;
+							case R_68K_PC8:		typestr = "PC8"; break;
+							default: break;
+							}
+
+							std::cout << "ELF R_68K_" << typestr
+									  << " " << j 
+									  << " in section " << i << " [" << psec->get_name() << "]"
+									  << " offset:" << offset 
+									  << " symval:" << symbolValue 
+									  << " sym:" << symbolName
+									  << " type:" << type 
+									  << " addend:" << addend
+									  << " calc:" << calcValue 
+									  << std::endl;
+						}
+
+						// TODO: Ok, we need to mark which section this relocation
+						// is refering to. For now we're going to blindly assume that it
+						// refers to the previous one as they usually go in pairs
+						// (.text / .rela.text). If this is bad then well, this is what
+						// to change!
+						assert(i >= 0);
+//						if (section_map[i - 1] >= 0)
+						{
+//							assert((offset & 1) == 0);
+//							assert(section_map[i - 1] >= 0);
+
+							if (offset & 1)
+							{
+								// Now here's an odd one. We are asked to relocate
+								// a symbol that lies at an odd address. "That's absurd,
+								// it shouldn't happen" you say? Well guess what, we got
+								// bit by this exact issue while linking some libraries
+								// that had some weird exception handling code.
+								std::cout << "Fatal error: ELF file contains relocation that points "
+										<< "to symbol \"" << symbolName << "\" from an odd address"
+										<< " (" << offset << ")!" << std::endl
+										<< "brownout cannot produce a valid TOS executable under"
+										<< " these circumstances. Please correct the issue."
+										<< std::endl;
+										exit(0);
+
+							}
+
+							// find ELF section this reloc belongs to (section with lower bound <= query address)
+							elfsectionboundsmap_t::iterator reloc_bound = elfsectionboundsmap.upper_bound(offset);
+							// check for references to ends of sections where subsequent section (if any) doesn't immediately start.
+							// this handles edge cases like _bss_end which are not included in the section begin-end range
+							// note: shouldn't ever happen here but handled for consistency anyway.
+							if (reloc_bound == elfsectionboundsmap.end())
+								reloc_bound = elfsectionboundsmap.upper_bound(offset-1);
+							// make sure it refers to a section we actually kept
+							assert(reloc_bound != elfsectionboundsmap.end());
+							// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
+							assert(offset >= reloc_bound->second.first);
+							// get ELF section index pair<endaddr,[index]>
+							int reloc_elfidx = reloc_bound->second.second;
+							assert(section_map[reloc_elfidx] >= 0);
+
+							// record the relocation for processing
+							tos_relocs[no_relocs].elfsection = reloc_elfidx;// i - 1;
+							tos_relocs[no_relocs].tossection = section_map[reloc_elfidx];// section_map[i - 1];
+							tos_relocs[no_relocs].offset_fixup = (uint32_t)offset;
+							tos_relocs[no_relocs].elfcalcvalue = calcValue;// symbolValue;
+							tos_relocs[no_relocs].elfsymname = symbolName;
+							// we need to handle more than one type of reloc, so we query again later after filtering and sorting
+							// todo: can remove some of these stored fields not required for the sorting pass
+							// and defer them to the final stage. they eat a lot of memory anyway.
+							tos_relocs[no_relocs].type = type;
+							// only absolute relocations make it into the TOS reloc table.
+							// the pc-relative ones are just baked into the text/data after section rearrangement.
+							tos_relocs[no_relocs].absolute = (type == R_68K_32);
+							no_relocs++;
+						}
+						break;
+					}
+				default:
+					{
+						std::cerr << "error: Section " << i 
+								  << " contains unhandled R_68K_?? relocation type ["
+								  << type << "]"
+								  << std::endl;                    
+						break;
+					}
                 }
             }
         }
@@ -1139,66 +1194,170 @@ int _tmain(int argc, TCHAR * argv[])
 		{
 			int r = it->second; it++;
 
+			std::string &ref_name = tos_relocs[r].elfsymname;
+
 			section *psec = reader.sections[tos_relocs[r].elfsection];
 			uint32_t esa = psec->get_address();
 			uint32_t tsa = prg_sect[tos_relocs[r].tossection].offset;
+			uint32_t elfoffset = tos_relocs[r].offset_fixup;
+			uint32_t reference = tos_relocs[r].elfcalcvalue;
 
 			uint32_t tosreloc_file = tos_relocs[r].offset_fixup - esa + tsa;
 			uint32_t tosreloc_mem = tosreloc_file - 28;
 
-			if (DEBUG)
+			short r_type = tos_relocs[r].type;
+
+			switch (r_type)
 			{
-				printf("esa:%x, tsa:%x, osf:%x, tosreloc:%x\n", esa, tsa, tos_relocs[r].offset_fixup, tosreloc_mem);
+			case R_68K_32:
+			default:
+				break;
+			case R_68K_PC32:
+			case R_68K_PC16:
+			case R_68K_PC8:
+				reference += elfoffset;
+				break;
 			}
 
-			// adjust the original reloc value to cope with section output rearrangement (ELF->TOS)
+
+			// find ELF section this reference belongs to (section with lower bound <= query address)
+			elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(reference);
+			// check for references to ends of sections where subsequent section (if any) doesn't immediately start.
+			// this handles edge cases like _bss_end which are not included in the section begin-end range
+			if (reference_bound == elfsectionboundsmap.end())
+				reference_bound = elfsectionboundsmap.upper_bound(reference - 1);
+			// make sure it refers to a section we actually kept
+			assert(reference_bound != elfsectionboundsmap.end());
+			// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
+			assert(reference >= reference_bound->second.first);
+			// get ELF section index pair<endaddr,[index]>
+			int reference_elfidx = reference_bound->second.second;
+			assert(section_map[reference_elfidx] >= 0);
+			// base address of original elf section bounding the reference
+			uint32_t reference_esa = reader.sections[reference_elfidx]->get_address();
+			// base address of new tos section bounding the reference
+			uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
+			
+			if (DEBUG || (r_type != R_68K_32))
+			{
+				//	printf("esa:%x, tsa:%x, osf:%x, tosreloc:%x\n", esa, tsa, tos_relocs[r].offset_fixup, tosreloc_mem);
+
+				static const char* const typestrs[] =
+				{
+					"R_68K_NONE",
+					"R_68K_32",
+					"R_68K_16",
+					"R_68K_8",
+					"R_68K_PC32",
+					"R_68K_PC16",
+					"R_68K_PC8"
+				};
+
+				if (ref_name.length() > 0)
+				{
+					// points at a named public symbol
+					printf
+					(
+						"%s: eVA:$%06x eSec[%s] eSecVA:$%06x (tVA:$%06x tSecVA:$%06x) -> r_sym[%s] r_eVA:$%06x r_eSec[%s] r_eSecVA:$%06x r_eSecVAE:$%06x (r_tVA:$%06x r_tSecVA:$%06x)\n",
+						typestrs[r_type],
+						//
+						elfoffset,												// elf RVA
+						reader.sections[tos_relocs[r].elfsection]->get_name().c_str(),		// elf section name
+						esa,													// elf section start VA
+						//
+						tosreloc_mem,											// tos RVA
+						tsa,													// tos section start RVA
+						//
+						ref_name.c_str(),										// referred symbol name
+						reference,												// referred elf VA (symbol VA)
+						reader.sections[reference_elfidx]->get_name().c_str(),	// referred elf section name
+						reference_bound->second.first,							// referred elf section start VA
+						reference_bound->first,									// referred elf section end VA
+						//
+						reference - reference_esa + reference_tsa,				// referred tos VA
+						reference_tsa											// referred tos section start VA
+					);
+				}
+				else
+				{
+					// points at anonymous or hidden symbol
+					printf
+					(
+						"%s: eVA:$%06x eSec[%s] eSecVA:$%06x (tVA:$%06x tSecVA:$%06x) -> r_eVA:$%06x r_eSec[%s] r_eSecVA:$%06x r_eSecVAE:$%06x (r_tVA:$%06x r_tSecVA:$%06x)\n",
+						typestrs[r_type],
+						//
+						elfoffset,											// elf RVA
+						reader.sections[tos_relocs[r].elfsection]->get_name().c_str(),		// elf section name
+						esa,													// elf section start VA
+						//
+						tosreloc_mem,											// tos RVA
+						tsa,													// tos section start RVA
+						//
+						reference,												// referred elf VA (symbol VA)
+						reader.sections[reference_elfidx]->get_name().c_str(),	// referred elf section name
+						reference_bound->second.first,							// referred elf section start VA
+						reference_bound->first,									// referred elf section end VA
+						//
+						reference - reference_esa + reference_tsa,				// referred tos VA
+						reference_tsa											// referred tos section start VA
+					);
+				}
+			} // DEBUG
+
+			// adjust the relative part of the reloc value to cope with section output rearrangement (ELF->TOS)
 			// since the automatic part of the relocation is a shared base address only. we're upsetting 
 			// relocs on an individual (or at least per-section) basis so they need more fine-grained repair.
-			if (1)
+
+			switch (r_type)
 			{
-				// extract the original reloc data
-				//fseek(tosfile, (long)tosreloc_file, 0);
-				//fread(relo_data, 1, 4, tosfile);
-				//uint32_t freference = BYTESWAP32(relo_data[0]);
+			case R_68K_32:
+				// adjust the REL part to compensate for section rearrangement
+				// this is an ABS relocation so adjust relative to sections only
+				reference -= reference_esa;
+				reference += reference_tsa;
 
-				uint32_t reference = tos_relocs[r].elfsymaddr;
-
-				{
-
-				// find ELF section this reference belongs to (section with lower bound <= query address)
-				elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(reference);
-				// make sure it refers to a section we actually kept
-				assert(reference_bound != elfsectionboundsmap.end());
-				// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
-				assert(reference >= reference_bound->second.first);
-				// get ELF section index pair<endaddr,[index]>
-				int reference_elfidx = reference_bound->second.second;
-				assert(section_map[reference_elfidx] >= 0);
-				// base address of original elf section bounding the reference
-				uint32_t reference_esa = reader.sections[reference_elfidx]->get_address();
-				// base address of new tos section bounding the reference
-				uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
-
-				if (DEBUG)
-				{
-					printf("reloc references: ea:%x esec:%s ess:%x ese:%x\n",
-						reference,
-						reader.sections[reference_elfidx]->get_name().c_str(),
-						reference_bound->second.first,
-						reference_bound->first
-						);
-				}
-
-				// adjust the relocation to compensate for section rearrangement
-				reference = reference - reference_esa + reference_tsa;
-				}
-
-				// store the updated reloc data
+				// write the updated 32bit value
 				relo_data[0] = BYTESWAP32(reference);
 				fseek(tosfile, (long)tosreloc_file, 0);
 				fwrite(relo_data, 1, 4, tosfile);
+				break;
+
+			case R_68K_PC32:
+				//assert(tos_relocs[r].elfsection != reference_elfidx);
+
+				//if (tos_relocs[r].elfsection != reference_elfidx)
+				{
+					// adjust the REL part to compensate for section rearrangement
+					// this is a PC-relative relocation so subtract reloc location in TOS VA
+					reference -= reference_esa;
+					reference += reference_tsa;
+				}
+
+				reference -= tosreloc_mem;
+
+				// write the updated 32bit value
+				relo_data[0] = BYTESWAP32(reference);
+				fseek(tosfile, (long)tosreloc_file, 0);
+				fwrite(relo_data, 1, 4, tosfile);
+				break;
+
+			case R_68K_PC16:
+				std::cerr << "error: won't process cross-section 16bit PC-relative relocation type [R_68K_PC16]" << std::endl;
+				exit(1);
+				break;
+
+			case R_68K_PC8:
+				std::cerr << "error: won't process cross-section 8bit PC-relative relocation type [R_68K_PC8]" << std::endl;
+				exit(1);
+				break;
+
+			default:
+				std::cerr << "error: can't process unhandled relocation type [" << r_type << "]" << std::endl;
+				exit(1);
+				break;
 			}
-		}
+		} // while (it != relocmap.end())
+
 		fseek(tosfile, sv, 0);
 	}
 	
@@ -1215,31 +1374,43 @@ int _tmain(int argc, TCHAR * argv[])
 		uint32_t diff;
 		uint8_t temp;
 		uint32_t temp_byteswap;
+		int i = 0, ri = 0;
 		// Handle first relocation separately as
 		// the offset needs to be a longword.
 				
 		// get first address-sorted reloc index
 		current_reloc = it->first;
-		int ri = it->second; it++;
+		ri = it->second; it++; i++;
+
+		// scan until first absolute relocation (R_68k_32). we don't put the PC-relative ones in the TOS reloctbl.
+		while (!(tos_relocs[ri].absolute))
+		{
+			current_reloc = it->first;
+			ri = it->second; it++; i++;
+		}
 
 		temp_byteswap = BYTESWAP32(current_reloc);
 		fwrite(&temp_byteswap, 4, 1, tosfile);
-		for (int i = 1; i < no_relocs; i++)
+		for (; i < no_relocs; i++)
 		{
 			// get next address-sorted reloc index
 			next_reloc = it->first;
-			int ri = it->second; it++;
+			ri = it->second; it++;
 
-			diff = next_reloc - current_reloc;
-			while (diff > 254)
+			// process only absolute relocations (R_68k_32). we don't put the PC-relative ones in the TOS reloctbl.
+			if (tos_relocs[ri].absolute)
 			{
-				temp = 1;
+				diff = next_reloc - current_reloc;
+				while (diff > 254)
+				{
+					temp = 1;
+					fwrite(&temp, 1, 1, tosfile);
+					diff -= 254;
+				}
+				temp = diff;
 				fwrite(&temp, 1, 1, tosfile);
-				diff -= 254;
+				current_reloc = next_reloc;
 			}
-			temp = diff;
-			fwrite(&temp, 1, 1, tosfile);
-			current_reloc = next_reloc;
 		}
 
 		// Finally, write a 0 to terminate the symbol table
@@ -1248,6 +1419,7 @@ int _tmain(int argc, TCHAR * argv[])
     }
     else
     {
+		// todo: corner case where all relocations were PC-relative, should still have routed here. needs fixed.
 		std::cout << "no relocation table required." << std::endl;
 
         // Write a null longword to express list termination
@@ -1339,7 +1511,7 @@ void demangle(std::string &name, std::string &demangled)
     }
 
     demangled=exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
-
+	
 	// trim control characters from response
 	if (demangled.length() > 0)
 		while ((demangled.back() == '\n') || (demangled.back() == '\r') || (demangled.back() == ' '))

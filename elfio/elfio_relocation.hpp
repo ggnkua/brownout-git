@@ -159,6 +159,19 @@ class relocation_section_accessor
 
         if ( ret ) { // Was it successful?
             switch ( type ) {
+
+            case R_68K_NONE:        // none
+                calcValue = 0;
+                break;
+            case R_68K_32:          // S + A
+                calcValue = symbolValue + addend;
+                break;
+            case R_68K_PC32:        // S + A - P
+            case R_68K_PC16:
+            case R_68K_PC8:
+                calcValue = symbolValue + addend - offset;
+                break;
+/*
             case R_386_NONE:        // none
                 calcValue = 0;
                 break;
@@ -190,6 +203,7 @@ class relocation_section_accessor
             case R_386_GOTPC:       // GOT + A - P
                 calcValue = 0;
                 break;
+*/
             default:                // Not recognized symbol!
                 calcValue = 0;
                 break;
