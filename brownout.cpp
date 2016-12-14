@@ -26,7 +26,10 @@ Everything else is released under the WTFPL. Probably.
 #define _CRT_SECURE_NO_WARNINGS
 
 // Let's make sure struct members are aligned to 2 bytes.
-// I wouldn't have put this here if I didn't get bit by this nonsense.
+// We wouldn't have put this here if we didn't get bit by this nonsense.
+// Note: When building under gcc, turning this on globally does some
+//       "creative" optimisations so it's turned on for selective structs.
+//       And it's too early to start drinking...
 #pragma pack(2)
 #endif
 
@@ -152,6 +155,9 @@ CSimpleOpt::SOption g_rgOptions[] =
 	SO_END_OF_OPTIONS                       // END
 };
 
+#if defined(__linux__)
+#pragma pack(push,2)
+#endif
 typedef struct
 {
 	uint16_t    PRG_magic;  // This WORD contains the magic value (0x601A).
@@ -163,7 +169,9 @@ typedef struct
 	uint32_t    PRGFLAGS;   // This LONG contains flags which define certain process characteristics (as defined below).
 	uint16_t    ABSFLAG;    // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
 } PRG_HEADER;
-
+#if defined(__linux__)
+#pragma pack(pop)
+#endif
 
 using namespace ELFIO;
 
@@ -190,12 +198,18 @@ typedef struct
 
 TOS_RELOC tos_relocs[64 * 1024];                // Enough? Who knows!
 
+#if defined(__linux__)
+#pragma pack(push,2)
+#endif
 typedef struct
 {
 	char name[8];
 	uint16_t type;
 	uint32_t value;
 } GST_SYMBOL;
+#if defined(__linux__)
+#pragma pack(pop)
+#endif
 
 GST_SYMBOL symtab[100 * 1024];  // Enough? Who knows!
 
