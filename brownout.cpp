@@ -251,6 +251,7 @@ int _tmain(int argc, TCHAR * argv[])
 	char infile[1024];
 	char outfile[1024];
 	bool DEBUG = false;
+	bool FPIC = false;
 	int SYMTABLE = SYM_NONE;
 	bool DEMANGLE = true;
 
@@ -364,21 +365,40 @@ int _tmain(int argc, TCHAR * argv[])
 
 	char injected_link_section[] =
 	{
-		0x60, 0x00,
-		0x00, 0x00
+		0x00, 0x00,
+		0x00, 0x00,
+		0x00, 0x00,
+		0x4e, 0x71
 	};
+
+	int linksize = 0;
+
+	if (FPIC)
+	{
+		// 32k relative branch
+		injected_link_section[0] = 0x60;
+		injected_link_section[1] = 0x00;
+		linksize = 4;
+	}
+	else
+	{
+		// abs jmp
+		injected_link_section[0] = 0x4e;
+		injected_link_section[1] = 0xf9;
+		linksize = 8;
+	}
 
 	{
 		prg_sect[no_sect].type = SECT_TEXT;
 		prg_sect[no_sect].offset = file_offset;
-		prg_sect[no_sect].size = 4;
-		prg_sect[no_sect].padded_size = 4;
+		prg_sect[no_sect].size = linksize;
+		prg_sect[no_sect].padded_size = linksize;
 		prg_sect[no_sect].data = (const char *)injected_link_section;
 		prg_sect[no_sect].sect_start = 0;
 		prg_sect[no_sect].sect_end = 0;
 
-		file_offset += 4;
-		toshead.PRG_tsize += 4;
+		file_offset += linksize;
+		toshead.PRG_tsize += linksize;
 		std::cout << "record [.tos_entrypoint] tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
 		no_sect++;
 	}
@@ -620,16 +640,45 @@ int _tmain(int argc, TCHAR * argv[])
 
 		printf("entrypoint located at eVA:$%06x (tVA:$%06x)\n", elf_entrypoint, tos_entrypoint);
 
-		uint32_t branch_offset = tos_entrypoint - 2;
 
-		if (branch_offset >= 32768)
+		if (FPIC)
 		{
-			std::cerr << "error: entrypoint (_start symbol) is >= 32k into program image. can't link!" << std::endl;
-			exit(1);
-		}
+			uint32_t branch_offset = tos_entrypoint - 2;
 
-		injected_link_section[2] = (branch_offset >> 8) & 0xFF;
-		injected_link_section[3] = (branch_offset >> 0) & 0xFF;
+			if (branch_offset >= 32768)
+			{
+				std::cerr << "error: entrypoint (_start symbol) is >= 32k into program image in -fpic mode. can't link!" << std::endl;
+				exit(1);
+			}
+
+			// word branch - no relocation required
+			injected_link_section[2] = (branch_offset >> 8) & 0xFF;
+			injected_link_section[3] = (branch_offset >> 0) & 0xFF;
+		}
+		else
+		{
+			// abs jmp - must emit relocation for thi
+			injected_link_section[2] = (tos_entrypoint >> 24) & 0xFF;
+			injected_link_section[3] = (tos_entrypoint >> 16) & 0xFF;
+			injected_link_section[4] = (tos_entrypoint >> 8) & 0xFF;
+			injected_link_section[5] = (tos_entrypoint >> 0) & 0xFF;
+
+			// record the relocation for processing
+			tos_relocs[no_relocs].elfsection = -1;
+			tos_relocs[no_relocs].tossection = 0;
+			tos_relocs[no_relocs].offset_fixup = (uint32_t)2;
+			tos_relocs[no_relocs].elfcalcvalue = tos_entrypoint;
+			tos_relocs[no_relocs].elfsymname = "toslink";
+			// we need to handle more than one type of reloc, so we query again later after filtering and sorting
+			// todo: can remove some of these stored fields not required for the sorting pass
+			// and defer them to the final stage. they eat a lot of memory anyway.
+			tos_relocs[no_relocs].type = R_68K_32;
+			// only absolute relocations make it into the TOS reloc table.
+			// the pc-relative ones are just baked into the text/data after section rearrangement.
+			tos_relocs[no_relocs].absolute = true;
+			no_relocs++;
+
+		}
 	}
 
 
@@ -1181,8 +1230,15 @@ int _tmain(int argc, TCHAR * argv[])
 	for (int r = 0; r < no_relocs; r++)
 	{
 		// compute reloc address
-		section *psec = reader.sections[tos_relocs[r].elfsection];
-		uint32_t esa = psec->get_address();
+
+		// assume elfsection=-1 to mean zero offset, for tos-based injected relocs.
+		uint32_t esa = 0;
+		if (tos_relocs[r].elfsection >= 0)
+		{
+			section *psec = reader.sections[tos_relocs[r].elfsection];
+			esa = psec->get_address();
+		}
+
 		uint32_t tsa = prg_sect[tos_relocs[r].tossection].offset;
 
 		uint32_t tosreloc_file = tos_relocs[r].offset_fixup - esa + tsa;
@@ -1212,8 +1268,12 @@ int _tmain(int argc, TCHAR * argv[])
 
 			std::string &ref_name = tos_relocs[r].elfsymname;
 
-			section *psec = reader.sections[tos_relocs[r].elfsection];
-			uint32_t esa = psec->get_address();
+			uint32_t esa = 0;
+			if (tos_relocs[r].elfsection >= 0)
+			{
+				section *psec = reader.sections[tos_relocs[r].elfsection];
+				esa = psec->get_address();
+			}
 			uint32_t tsa = prg_sect[tos_relocs[r].tossection].offset;
 			uint32_t elfoffset = tos_relocs[r].offset_fixup;
 			uint32_t reference = tos_relocs[r].elfcalcvalue;
@@ -1269,6 +1329,11 @@ int _tmain(int argc, TCHAR * argv[])
 					"R_68K_PC8"
 				};
 
+				if (tos_relocs[r].elfsection < 0)
+				{
+					// injected relocs which did not originate from the elf
+					printf("emitting injected reloc\n");
+				}
 				if (ref_name.length() > 0)
 				{
 					// points at a named public symbol
@@ -1329,8 +1394,11 @@ int _tmain(int argc, TCHAR * argv[])
 			case R_68K_32:
 				// adjust the REL part to compensate for section rearrangement
 				// this is an ABS relocation so adjust relative to sections only
-				reference -= reference_esa;
-				reference += reference_tsa;
+				if (tos_relocs[r].elfsection >= 0)
+				{
+					reference -= reference_esa;
+					reference += reference_tsa;
+				}
 
 				// write the updated 32bit value
 				relo_data[0] = BYTESWAP32(reference);
@@ -1342,20 +1410,21 @@ int _tmain(int argc, TCHAR * argv[])
 				//assert(tos_relocs[r].elfsection != reference_elfidx);
 
 				//if (tos_relocs[r].elfsection != reference_elfidx)
-			{
-				// adjust the REL part to compensate for section rearrangement
-				// this is a PC-relative relocation so subtract reloc location in TOS VA
-				reference -= reference_esa;
-				reference += reference_tsa;
-			}
+				if (tos_relocs[r].elfsection >= 0)
+				{
+					// adjust the REL part to compensate for section rearrangement
+					// this is a PC-relative relocation so subtract reloc location in TOS VA
+					reference -= reference_esa;
+					reference += reference_tsa;
+				}
 
-			reference -= tosreloc_mem;
+				reference -= tosreloc_mem;
 
-			// write the updated 32bit value
-			relo_data[0] = BYTESWAP32(reference);
-			fseek(tosfile, (long)tosreloc_file, 0);
-			fwrite(relo_data, 1, 4, tosfile);
-			break;
+				// write the updated 32bit value
+				relo_data[0] = BYTESWAP32(reference);
+				fseek(tosfile, (long)tosreloc_file, 0);
+				fwrite(relo_data, 1, 4, tosfile);
+				break;
 
 			case R_68K_PC16:
 				std::cerr << "error: won't process cross-section 16bit PC-relative relocation type [R_68K_PC16]" << std::endl;
