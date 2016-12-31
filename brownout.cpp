@@ -807,12 +807,35 @@ int _tmain(int argc, TCHAR * argv[])
 					}
 					break;
 				}
+
+				case R_68K_NONE:
+				{
+					std::cerr << "warning: encountered unhandled R_68K_NONE relocation"
+						<< " in section " << i << " [" << psec->get_name() << "]"
+						<< " offset:" << offset
+						<< " symval:" << symbolValue
+						<< " sym:" << symbolName
+						<< " addend:" << addend
+						<< " calc:" << calcValue
+						<< std::endl;
+
+					std::cerr << "\tthis may be a GCC6 bug - cases affecting [.eh_frame] can be removed by adding -fno-exceptions"
+						<< std::endl;
+
+					break;
+				}
+
 				default:
 				{
-					std::cerr << "error: Section " << i
-						<< " contains unhandled R_68K_?? relocation type ["
-						<< type << "]"
+					std::cerr << "error: encountered unhandled R_68K_?? relocation type [" << type << "]"
+						<< " in section " << i << " [" << psec->get_name() << "]"
+						<< " offset:" << offset
+						<< " symval:" << symbolValue
+						<< " sym:" << symbolName
+						<< " addend:" << addend
+						<< " calc:" << calcValue
 						<< std::endl;
+
 					break;
 				}
 				}
