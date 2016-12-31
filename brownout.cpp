@@ -16,6 +16,10 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
+#define VERSION bay
+
+#define STRINGIFY2(X) #X
+#define STRINGIFY(X) STRINGIFY2(X)
 
 #ifdef _MSC_VER
 #define _SCL_SECURE_NO_WARNINGS
@@ -177,7 +181,8 @@ using namespace ELFIO;
 
 void printhelp()
 {
-	printf("Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d] [-x]\n"
+	printf("brownout version \"" STRINGIFY(VERSION) "\"\n"
+        "Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d] [-x]\n"
 		"-s will create a symbol table.\n"
 		"-x will create an extended symbol table.\n"
 		"-d will turn on verbose debugging.\n"
