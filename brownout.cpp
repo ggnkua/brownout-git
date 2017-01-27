@@ -99,7 +99,10 @@ Everything else is released under the WTFPL. Probably.
 #include <memory>
 
 // better at catching things early inside VS debugger
+#ifdef _MSC_VER
+//#define assert(_x_) { if (!(_x_)) { __debugbreak(); }; }
 //#define assert(_x_) { if (!(_x_)) { __asm int 3 }; }
+#endif
 
 void demangle(std::string &name, std::string &demangled);
 
@@ -247,7 +250,6 @@ uint32_t relo_data[1];
 
 int _tmain(int argc, TCHAR * argv[])
 {
-
 	PRG_HEADER toshead = { 0x601a, 0, 0, 0, 0, 0, 0, 0 };  // Set up TOS header
 
 	// declare our options parser, pass in the arguments from main
