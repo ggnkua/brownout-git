@@ -16,7 +16,7 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-#define VERSION bay
+#define VERSION beige
 
 #define STRINGIFY2(X) #X
 #define STRINGIFY(X) STRINGIFY2(X)
@@ -146,7 +146,8 @@ enum
 	OPT_HELP,
 	OPT_DEBUG,
 	OPT_DEMANGLE,
-	OPT_EXTEND
+	OPT_EXTEND,
+    OPT_VERBOSE
 };
 
 CSimpleOpt::SOption g_rgOptions[] =
@@ -159,6 +160,7 @@ CSimpleOpt::SOption g_rgOptions[] =
 	{ OPT_EXTEND, _T("-x"), SO_NONE },
 	{ OPT_DEMANGLE, _T("-f"), SO_NONE },
 	{ OPT_HELP, _T("-h"), SO_NONE },
+    { OPT_VERBOSE, _T("-v"), SO_NONE },
 	SO_END_OF_OPTIONS                       // END
 };
 
@@ -189,7 +191,8 @@ void printhelp()
 		"-s will create a symbol table.\n"
 		"-x will create an extended symbol table.\n"
 		"-d will turn on verbose debugging.\n"
-		"-f will turn off C++ symbol demangling (i.e. you get ugly symbol names).\n");
+		"-f will turn on C++ symbol demangling (i.e. you don't get ugly symbol names).\n"
+        "-v will turn on verbose mode (less spammy than debugging)\n");
 }
 
 typedef struct
@@ -247,6 +250,7 @@ enum
 };
 
 uint32_t relo_data[1];
+bool DEMANGLE = false;
 
 int _tmain(int argc, TCHAR * argv[])
 {
@@ -260,7 +264,7 @@ int _tmain(int argc, TCHAR * argv[])
 	bool DEBUG = false;
 	bool FPIC = false;
 	int SYMTABLE = SYM_NONE;
-	bool DEMANGLE = true;
+    bool VERBOSE = false;
 
 	bool gotinput = false, gotoutput = false;
 
@@ -305,8 +309,12 @@ int _tmain(int argc, TCHAR * argv[])
 			}
 			else if (args.OptionId() == OPT_DEMANGLE)
 			{
-				DEMANGLE = false;
+				DEMANGLE = true;
 			}
+            else if (args.OptionId() == OPT_DEMANGLE)
+            {
+                VERBOSE = true;
+            }
 		}
 		else
 		{
@@ -365,7 +373,10 @@ int _tmain(int argc, TCHAR * argv[])
 
 	section *psec;
 
-	std::cout << "performing section layout..." << std::endl;
+    if (VERBOSE)
+    {
+        std::cout << "performing section layout..." << std::endl;
+    }
 
 	// inject link section in front of everything, which links to real entrypoint
 	// since ELF has its entrypoint in the header
@@ -406,7 +417,10 @@ int _tmain(int argc, TCHAR * argv[])
 
 		file_offset += linksize;
 		toshead.PRG_tsize += linksize;
-		std::cout << "record [.tos_entrypoint] tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+        if (VERBOSE)
+        {
+            std::cout << "record [.tos_entrypoint] tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+        }
 		no_sect++;
 	}
 
@@ -435,7 +449,10 @@ int _tmain(int argc, TCHAR * argv[])
 			file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
 			toshead.PRG_tsize += prg_sect[no_sect].padded_size;         // Update prg text size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
-			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            if (VERBOSE)
+            {
+                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            }
 			no_sect++;
 		}
 	}
@@ -475,7 +492,10 @@ int _tmain(int argc, TCHAR * argv[])
 			file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
 			toshead.PRG_tsize += prg_sect[no_sect].padded_size;         // Update prg text size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
-			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            if (VERBOSE)
+            {
+                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            }
 			no_sect++;
 		}
 	}
@@ -508,7 +528,10 @@ int _tmain(int argc, TCHAR * argv[])
 			file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
 			toshead.PRG_dsize += prg_sect[no_sect].padded_size;         // Update prg data size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
-			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            if (VERBOSE)
+            {
+                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            }
 			no_sect++;
 		}
 	}
@@ -539,18 +562,27 @@ int _tmain(int argc, TCHAR * argv[])
 			file_offset += (uint32_t)psec->get_size();                  // Update prg offset
 			toshead.PRG_bsize += prg_sect[no_sect].padded_size;            // Update prg bss size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
-			std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            if (VERBOSE)
+            {
+                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+            }
 			no_sect++;
 		}
 	}
 
 	// Print some basic info
-	std::cout <<
-		"TEXT size: " << toshead.PRG_tsize << std::endl <<
-		"DATA size:" << toshead.PRG_dsize << std::endl <<
-		"BSS size:" << toshead.PRG_bsize << std::endl;
+    if (VERBOSE)
+    {
+        std::cout <<
+            "TEXT size: " << toshead.PRG_tsize << std::endl <<
+            "DATA size:" << toshead.PRG_dsize << std::endl <<
+            "BSS size:" << toshead.PRG_bsize << std::endl;
+    }
 
-	std::cout << "processing relocation entries..." << std::endl;
+    if (VERBOSE)
+    {
+        std::cout << "processing relocation entries..." << std::endl;
+    }
 
 	uint32_t elf_entrypoint = 1;// reader.get_entry();
 
@@ -558,7 +590,10 @@ int _tmain(int argc, TCHAR * argv[])
 
 		if (1)
 		{
-			std::cout << "hunting entrypoint symbol..." << std::endl;
+            if (VERBOSE)
+            {
+                std::cout << "hunting entrypoint symbol..." << std::endl;
+            }
 
 			for (int si = 0; si < sec_num; si++)
 			{
@@ -645,9 +680,11 @@ int _tmain(int argc, TCHAR * argv[])
 
 		uint32_t tos_entrypoint = elf_entrypoint - reference_esa + reference_tsa;
 
-		printf("entrypoint located at eVA:$%06x (tVA:$%06x)\n", elf_entrypoint, tos_entrypoint);
-
-
+        if (VERBOSE)
+        {
+            printf("entrypoint located at eVA:$%06x (tVA:$%06x)\n", elf_entrypoint, tos_entrypoint);
+        }
+        
 		if (FPIC)
 		{
 			uint32_t branch_offset = tos_entrypoint - 2;
@@ -912,9 +949,12 @@ int _tmain(int argc, TCHAR * argv[])
 
 	int no_sym = 0;
 
-	if (SYMTABLE)
-	{
-		std::cout << "generating symbol table..." << std::endl;
+    if (SYMTABLE)
+    {
+        if (VERBOSE)
+        {
+            std::cout << "generating symbol table..." << std::endl;
+        }
 
 		for (int i = 0; i < sec_num; i++)
 		{
@@ -969,7 +1009,8 @@ int _tmain(int argc, TCHAR * argv[])
 									// so check for underscore and retry with underscore trimmed ($%^$%^ underscores!!!)
 									while (
 										(namein[0] == '_') &&
-										!demangled
+										!demangled &&
+                                        DEMANGLE
 										)
 									{
 										namein = namein.substr(1, namein.length() - 1);
@@ -1206,7 +1247,10 @@ int _tmain(int argc, TCHAR * argv[])
 		}
 	}
 
-	std::cout << "emitting program data..." << std::endl;
+    if (VERBOSE)
+    {
+        std::cout << "emitting program data..." << std::endl;
+    }
 
 	// Open output file and write things
 	FILE *tosfile = fopen(outfile, "w+b");
@@ -1222,20 +1266,32 @@ int _tmain(int argc, TCHAR * argv[])
 	writehead.PRGFLAGS = BYTESWAP32(toshead.PRGFLAGS);
 	writehead.ABSFLAG = BYTESWAP16(toshead.ABSFLAG);
 
+    // Figure out how big our output program will be
+    int prgsize= toshead.PRG_tsize + toshead.PRG_dsize + toshead.PRG_ssize;
+    if (no_relocs > 0)
+        prgsize = 1024*1024;        // Let's assume that 1mb should be enough for relocations? (O_o otherwise a ton of code has to be added for analytical calculation)
+    char *prgbuffer = (char *)malloc(prgsize);
+    char *prgbuffer_start = prgbuffer;
+
 	// Write header
-	fwrite(&writehead, sizeof(writehead), 1, tosfile);
+	//fwrite(&writehead, sizeof(writehead), 1, tosfile);
+    memcpy(prgbuffer, &writehead, sizeof(writehead));
+    prgbuffer = prgbuffer+sizeof(writehead);
 
 	// Write text and data sections
 	for (int i = 0; i < no_sect; i++)
 	{
 		if (prg_sect[i].type == SECT_TEXT || prg_sect[i].type == SECT_DATA)
 		{
-			fwrite(prg_sect[i].data, prg_sect[i].size, 1, tosfile);
+			//fwrite(prg_sect[i].data, prg_sect[i].size, 1, tosfile);
+            memcpy(prgbuffer, prg_sect[i].data, prg_sect[i].size);
+            prgbuffer = prgbuffer + prg_sect[i].size;
 			if ((prg_sect[i].size & 1) == 1)
 			{
 				// Odd size, add padding
-				char pad = 0;
-				fwrite(&pad, 1, 1, tosfile);
+				//char pad = 0;
+				//fwrite(&pad, 1, 1, tosfile);
+                *prgbuffer++ = 0;
 			}
 		}
 		// TODO2: For 030 executables pad sections to 4 bytes?
@@ -1244,15 +1300,20 @@ int _tmain(int argc, TCHAR * argv[])
 	// write symbol table
 	if (toshead.PRG_ssize != 0)
 	{
-		std::cout << "emitting symbol table..." << std::endl;
+        if (VERBOSE)
+        {
+            std::cout << "emitting symbol table..." << std::endl;
+        }
 
-		fwrite(symtab, toshead.PRG_ssize, 1, tosfile);
+		//fwrite(symtab, toshead.PRG_ssize, 1, tosfile);
+        memcpy(prgbuffer, symtab, toshead.PRG_ssize);
+        prgbuffer = prgbuffer + toshead.PRG_ssize;
 	}
 
 
 	// shove all reloc indices in a map, using the address as the sort key
 	// (equivalent to a tree-insert-sort)
-	if (no_relocs > 0)
+	if (no_relocs > 0 && VERBOSE)
 		std::cout << "sorting " << no_relocs << " relocations..." << std::endl;
 
 	typedef std::map<uint32_t, int> relocmap_t;
@@ -1283,7 +1344,10 @@ int _tmain(int argc, TCHAR * argv[])
 
 	if (no_relocs > 0)
 	{
-		std::cout << "correcting relocations after section layout..." << std::endl;
+        if (VERBOSE)
+        {
+            std::cout << "correcting relocations after section layout..." << std::endl;
+        }
 
 		fflush(tosfile);
 		long sv = ftell(tosfile);
@@ -1431,9 +1495,10 @@ int _tmain(int argc, TCHAR * argv[])
 				}
 
 				// write the updated 32bit value
-				relo_data[0] = BYTESWAP32(reference);
-				fseek(tosfile, (long)tosreloc_file, 0);
-				fwrite(relo_data, 1, 4, tosfile);
+				//relo_data[0] = BYTESWAP32(reference);
+				//fseek(tosfile, (long)tosreloc_file, 0);
+				//fwrite(relo_data, 1, 4, tosfile);
+                *(long *)&prgbuffer_start[tosreloc_file] = BYTESWAP32(reference);
 				break;
 
 			case R_68K_PC32:
@@ -1451,9 +1516,10 @@ int _tmain(int argc, TCHAR * argv[])
 				reference -= tosreloc_mem;
 
 				// write the updated 32bit value
-				relo_data[0] = BYTESWAP32(reference);
-				fseek(tosfile, (long)tosreloc_file, 0);
-				fwrite(relo_data, 1, 4, tosfile);
+				//relo_data[0] = BYTESWAP32(reference);
+				//fseek(tosfile, (long)tosreloc_file, 0);
+				//fwrite(relo_data, 1, 4, tosfile);
+                *(long *)&prgbuffer_start[tosreloc_file] = BYTESWAP32(reference);
 				break;
 
 			case R_68K_PC16:
@@ -1479,7 +1545,10 @@ int _tmain(int argc, TCHAR * argv[])
 	// Write relocation table
 	if (no_relocs > 0)
 	{
-		std::cout << "emitting relocation table..." << std::endl;
+        if (VERBOSE)
+        {
+            std::cout << "emitting relocation table..." << std::endl;
+        }
 
 		// sorted map of reloc indices
 		relocmap_t::iterator it = relocmap.begin();
@@ -1504,8 +1573,10 @@ int _tmain(int argc, TCHAR * argv[])
 			ri = it->second; it++; i++;
 		}
 
-		temp_byteswap = BYTESWAP32(current_reloc);
-		fwrite(&temp_byteswap, 4, 1, tosfile);
+		//temp_byteswap = BYTESWAP32(current_reloc);
+		//fwrite(&temp_byteswap, 4, 1, tosfile);
+        *(long *)prgbuffer= BYTESWAP32(current_reloc);
+        prgbuffer = prgbuffer + 4;
 		for (; i < no_relocs; i++)
 		{
 			// get next address-sorted reloc index
@@ -1518,34 +1589,50 @@ int _tmain(int argc, TCHAR * argv[])
 				diff = next_reloc - current_reloc;
 				while (diff > 254)
 				{
-					temp = 1;
-					fwrite(&temp, 1, 1, tosfile);
+					//temp = 1;
+					//fwrite(&temp, 1, 1, tosfile);
+                    *prgbuffer++ = 1;
 					diff -= 254;
 				}
-				temp = diff;
-				fwrite(&temp, 1, 1, tosfile);
+				//temp = diff;
+				//fwrite(&temp, 1, 1, tosfile);
+                *prgbuffer++ = diff;
 				current_reloc = next_reloc;
 			}
 		}
 
 		// Finally, write a 0 to terminate the symbol table
-		temp = 0;
-		fwrite(&temp, 1, 1, tosfile);
+		//temp = 0;
+		//fwrite(&temp, 1, 1, tosfile);
+        *prgbuffer++ = 0;
 	}
 	else
 	{
 		// todo: corner case where all relocations were PC-relative, should still have routed here. needs fixed.
-		std::cout << "no relocation table required." << std::endl;
+        if (VERBOSE)
+        {
+            std::cout << "no relocation table required." << std::endl;
+        }
 
 		// Write a null longword to express list termination
 		// (as suggested by the Atari Compendium chapter 2)
-		fwrite(&no_relocs, 4, 1, tosfile);
+		//fwrite(&no_relocs, 4, 1, tosfile);
+        *(long *)prgbuffer = 0;
+        prgbuffer = prgbuffer + 4;
+
 	}
+
+    // Now, write the file in one big swoop
+
+    fwrite(prgbuffer_start, prgbuffer - prgbuffer_start, 1, tosfile);
 
 	// Done writing stuff
 	fclose(tosfile);
 
-	std::cout << "done!" << std::endl;
+    if (VERBOSE)
+    {
+        std::cout << "done!" << std::endl;
+    }
 
 	return 0;
 }
@@ -1568,8 +1655,13 @@ std::string exec(const char* cmd)
 	char buffer[128];
 	std::string result = "";
 	std::shared_ptr<FILE> pipe(POPEN(cmd, "r"), PCLOSE);
-	if (!pipe) throw std::runtime_error("popen() failed!");
-	while (!feof(pipe.get()))
+	//if (!pipe) throw std::runtime_error("popen() failed!");
+    //if (pipe==NULL)
+    //{
+    //    std::cout << "Note: m68k-ataribrown-elf-c++filt not found in your path - turning demangling off." << std::endl;
+    //    return NULL;
+    //}
+    while (!feof(pipe.get()))
 	{
 		if (fgets(buffer, 128, pipe.get()) != NULL)
 			result += buffer;
@@ -1581,6 +1673,12 @@ void demangle(std::string &name, std::string &demangled)
 {
 
 	demangled = exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
+    
+    if (demangled== "")
+    {
+        std::cout << "Note: m68k-ataribrown-elf-c++filt not found in your path - turning demangling off." << std::endl;
+        DEMANGLE = false;
+    }
 
 	// trim control characters from response
 	if (demangled.length() > 0)
