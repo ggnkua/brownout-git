@@ -13,7 +13,13 @@ Everything else is released under the WTFPL. Probably.
 
 
 Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d] [-x]
+
             -s will create a symbol table.
+
             -d will turn on verbose debugging.
+
             -x will create an extended symbol table.
-            -f will turn off C++ symbol demangling (i.e. you get ugly symbol names).
+
+            -f will turn on C++ symbol demangling (i.e. you don't get ugly symbol names).
+
+            -v will turn on verbose mode (less spammy than debugging)
