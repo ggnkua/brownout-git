@@ -1504,7 +1504,7 @@ int _tmain(int argc, TCHAR * argv[])
 				//relo_data[0] = BYTESWAP32(reference);
 				//fseek(tosfile, (long)tosreloc_file, 0);
 				//fwrite(relo_data, 1, 4, tosfile);
-                *(long *)&prgbuffer_start[tosreloc_file] = BYTESWAP32(reference);
+                *(uint32_t *)&prgbuffer_start[tosreloc_file] = BYTESWAP32(reference);
 				break;
 
 			case R_68K_PC32:
@@ -1525,7 +1525,7 @@ int _tmain(int argc, TCHAR * argv[])
 				//relo_data[0] = BYTESWAP32(reference);
 				//fseek(tosfile, (long)tosreloc_file, 0);
 				//fwrite(relo_data, 1, 4, tosfile);
-                *(long *)&prgbuffer_start[tosreloc_file] = BYTESWAP32(reference);
+                *(uint32_t *)&prgbuffer_start[tosreloc_file] = BYTESWAP32(reference);
 				break;
 
 			case R_68K_PC16:
@@ -1581,7 +1581,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 		//temp_byteswap = BYTESWAP32(current_reloc);
 		//fwrite(&temp_byteswap, 4, 1, tosfile);
-        *(long *)prgbuffer= BYTESWAP32(current_reloc);
+        *(uint32_t *)prgbuffer= BYTESWAP32(current_reloc);
         prgbuffer = prgbuffer + 4;
 		for (; i < no_relocs; i++)
 		{
@@ -1623,7 +1623,7 @@ int _tmain(int argc, TCHAR * argv[])
 		// Write a null longword to express list termination
 		// (as suggested by the Atari Compendium chapter 2)
 		//fwrite(&no_relocs, 4, 1, tosfile);
-        *(long *)prgbuffer = 0;
+        *(uint32_t *)prgbuffer = 0;
         prgbuffer = prgbuffer + 4;
 
 	}
