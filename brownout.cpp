@@ -17,7 +17,7 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-#define VERSION bister
+#define VERSION brick
 
 #define STRINGIFY2(X) #X
 #define STRINGIFY(X) STRINGIFY2(X)
@@ -1083,7 +1083,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 						strcpy(gst_name, name.substr(0, 24).c_str());
 						// Skip null names
-						if (gst_name[0] == NULL)
+						if (gst_name[0] == 0)
 							continue;
 
 						// Check binding type
