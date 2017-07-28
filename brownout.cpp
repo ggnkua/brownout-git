@@ -2,7 +2,7 @@
 
 brownout - A humble .elf to ST .prg binary converter
 
-Written by George Nakos and Douglas Litte.
+Written by George Nakos and Douglas Little.
 Thanks to Troed Sångberg for the Macintosh bits.
 
 Uses the elfio library by Serge Lamikhov-Center to do the
@@ -17,7 +17,7 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-#define VERSION brick
+#define VERSION bronze
 
 #define STRINGIFY2(X) #X
 #define STRINGIFY(X) STRINGIFY2(X)

@@ -1,6 +1,6 @@
 brownout - A humble .elf to ST .prg binary converter
 
-Written by George Nakos and Douglas Litte.
+Written by George Nakos and Douglas Little.
 
 Uses the *elfio* library by Serge Lamikhov-Center to do the
 heavy lifting that is ELF parsing. See elfio.hpp for its
