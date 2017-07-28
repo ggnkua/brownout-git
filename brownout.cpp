@@ -1260,6 +1260,11 @@ int _tmain(int argc, TCHAR * argv[])
 
 	// Open output file and write things
 	FILE *tosfile = fopen(outfile, "w+b");
+	if (tosfile==NULL)
+	{
+		std::cout << "Unable to open file " << outfile << " for output." << std::endl;
+		exit(1);
+	}
 
 	// Byte swap prg header if needed
 	PRG_HEADER writehead;
