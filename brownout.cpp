@@ -798,17 +798,8 @@ int _tmain(int argc, TCHAR * argv[])
 							<< std::endl;
 					}
 
-					// TODO: Ok, we need to mark which section this relocation
-					// is refering to. For now we're going to blindly assume that it
-					// refers to the previous one as they usually go in pairs
-					// (.text / .rela.text). If this is bad then well, this is what
-					// to change!
 					assert(i >= 0);
-					//						if (section_map[i - 1] >= 0)
 					{
-						//							assert((offset & 1) == 0);
-						//							assert(section_map[i - 1] >= 0);
-
 						if (offset & 1)
 						{
 							// Now here's an odd one. We are asked to relocate
@@ -1194,31 +1185,6 @@ int _tmain(int argc, TCHAR * argv[])
 
 							break;
 						}
-						//case STB_GLOBAL:
-						//{
-						//    // Section 65521 is (probably) the section for absolute labels
-						//    if (section == 65521 && value != 0)
-						//    {
-						//        strcpy(symtab[no_sym].name, gst_name);
-						//        symtab[no_sym].type = 0x2000;
-						//        symtab[no_sym].value = (uint32_t)value;
-						//    }
-						//    else
-						//    {
-						//        for (int j = 0; j < no_sect; j++)
-						//        {
-						//            if (value >= prg_sect[j].sect_start && value <= prg_sect[j].sect_end)
-						//            {
-						//                strcpy(symtab[no_sym].name, gst_name);
-						//                symtab[no_sym].type = 0x2000;
-						//                symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset;
-						//                no_sym++;
-						//                break;
-						//            }
-						//        }
-						//    }
-						//    break;
-						//}
 						case STB_LOOS:
 						case STB_HIOS:
 						case STB_LOPROC:
