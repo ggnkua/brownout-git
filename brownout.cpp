@@ -304,6 +304,7 @@ int _tmain(int argc, TCHAR * argv[])
 			else if (args.OptionId() == OPT_DEBUG)
 			{
 				DEBUG = true;
+                VERBOSE = true;
 			}
 			else if (args.OptionId() == OPT_SYMTABLE)
 			{
@@ -317,7 +318,7 @@ int _tmain(int argc, TCHAR * argv[])
 			{
 				DEMANGLE = true;
 			}
-            else if (args.OptionId() == OPT_DEMANGLE)
+            else if (args.OptionId() == OPT_VERBOSE)
             {
                 VERBOSE = true;
             }
@@ -448,7 +449,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
 
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
-			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
 			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
 
@@ -491,7 +492,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
 
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
-			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
 			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
 
@@ -525,7 +526,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
 
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
-			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
 			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
 
@@ -558,7 +559,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
 
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
-			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning 
+			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
 			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
 
@@ -690,7 +691,7 @@ int _tmain(int argc, TCHAR * argv[])
         {
             printf("entrypoint located at eVA:$%06x (tVA:$%06x)\n", elf_entrypoint, tos_entrypoint);
         }
-        
+
 		if (FPIC)
 		{
 			uint32_t branch_offset = tos_entrypoint - 2;
@@ -976,7 +977,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 					for (Elf_Half i = 0; i < sym_no; ++i)
 					{
-						char gst_name[25] = 
+						char gst_name[25] =
 						{	
 							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
 							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -1408,7 +1409,11 @@ int _tmain(int argc, TCHAR * argv[])
 			if (reference_bound == elfsectionboundsmap.end())
 				reference_bound = elfsectionboundsmap.upper_bound(reference - 1);
 			// make sure it refers to a section we actually kept
-			assert(reference_bound != elfsectionboundsmap.end());
+            if (reference_bound != elfsectionboundsmap.end())
+            {
+                    printf("error: computed relocation 0x%08x points at an area not mapped by existing sections\n", reference);
+                    exit(-1);
+            }
 			// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
 			assert(reference >= reference_bound->second.first);
 			// get ELF section index pair<endaddr,[index]>
@@ -1491,7 +1496,7 @@ int _tmain(int argc, TCHAR * argv[])
 			} // DEBUG
 
 			// adjust the relative part of the reloc value to cope with section output rearrangement (ELF->TOS)
-			// since the automatic part of the relocation is a shared base address only. we're upsetting 
+			// since the automatic part of the relocation is a shared base address only. we're upsetting
 			// relocs on an individual (or at least per-section) basis so they need more fine-grained repair.
 
 			switch (r_type)
@@ -1684,7 +1689,7 @@ void demangle(std::string &name, std::string &demangled)
 {
 
 	demangled = exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
-    
+
     if (demangled== "")
     {
         std::cout << "Note: m68k-ataribrown-elf-c++filt not found in your path - turning demangling off." << std::endl;
