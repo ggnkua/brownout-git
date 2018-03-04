@@ -201,6 +201,8 @@ void printhelp()
         "-v will turn on verbose mode (less spammy than debugging)\n");
 }
 
+static const int TOS_FILE_HEADERSIZE = 28;
+
 typedef struct
 {
 	uint32_t offset_fixup;					// Offset inside the section
@@ -233,6 +235,7 @@ GST_SYMBOL symtab[100 * 1024];  // Enough? Who knows!
 typedef struct
 {
 	int         type;       // Type of section (see enum below)
+	std::string	name;
 	uint32_t    offset;     // Offset of section inside the TOS PRG
 	uint32_t    size;       // Original size of section
 	uint32_t    padded_size;    // Size of section with even padding
@@ -356,16 +359,23 @@ int _tmain(int argc, TCHAR * argv[])
 		dump::segment_datas(std::cout, reader);
 	}
 
+	if (reader.get_type() != ET_EXEC)
+	{
+		printf("error: file %s is not an ELF executable (possibly an object file)\n", infile);
+		exit(1);
+	}
+
 	// From here on starts the browness - helmets on!
 
 	Elf_Half sec_num = reader.sections.size();
 
 	typedef std::map<uint32_t, std::pair<uint32_t, int> > elfsectionboundsmap_t;
 	elfsectionboundsmap_t elfsectionboundsmap;
+	elfsectionboundsmap_t elfsectionstartmap;
 
 	int no_relocs = 0;
 
-	uint32_t file_offset = 28;                       // Mostly used to calculate the offset of the BSS section inside the .prg
+	uint32_t file_offset = TOS_FILE_HEADERSIZE;      // Mostly used to calculate the offset of the BSS section inside the .prg
 	ST_SECTION prg_sect[256];                        // Enough? Who knows!
 	int section_map[256];                            // This keeps track of which elf section is mapped in which prg_sect index (i.e. a reverse look-up)
 	int no_sect = 0;
@@ -378,7 +388,7 @@ int _tmain(int argc, TCHAR * argv[])
 		claimed_sections[i] = false;
 	}
 
-	section *psec;
+	ELFIO::section *psec;
 
     if (VERBOSE)
     {
@@ -415,6 +425,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 	{
 		prg_sect[no_sect].type = SECT_TEXT;
+		prg_sect[no_sect].name = "TEXT";
 		prg_sect[no_sect].offset = file_offset;
 		prg_sect[no_sect].size = linksize;
 		prg_sect[no_sect].padded_size = linksize;
@@ -426,7 +437,8 @@ int _tmain(int argc, TCHAR * argv[])
 		toshead.PRG_tsize += linksize;
         if (VERBOSE)
         {
-            std::cout << "record [.tos_entrypoint] tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+			printf("record: section[.tos_entrypoint] tsi:%d fbeg:0x%x fend:0x%x\n",
+				no_sect, prg_sect[no_sect].offset, file_offset);
         }
 		no_sect++;
 	}
@@ -441,6 +453,7 @@ int _tmain(int argc, TCHAR * argv[])
 		{
 			claimed_sections[i] = true;
 			prg_sect[no_sect].type = SECT_TEXT;
+			prg_sect[no_sect].name = "TEXT";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
 			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
@@ -451,14 +464,22 @@ int _tmain(int argc, TCHAR * argv[])
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
 			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
-			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
+			if (elfsectionstartmap.find(psec->get_address()) != elfsectionstartmap.end())
+			{
+				printf("error: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x collides with an existing section\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, file_offset, file_offset + prg_sect[no_sect].padded_size);
+				exit(1);
+			}
+			elfsectionstartmap[prg_sect[no_sect].sect_start] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_end, i);
+			elfsectionboundsmap[prg_sect[no_sect].sect_end] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_start, i);
 
 			file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
 			toshead.PRG_tsize += prg_sect[no_sect].padded_size;         // Update prg text size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
             if (VERBOSE)
             {
-                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+				printf("record: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, prg_sect[no_sect].offset, file_offset);
             }
 			no_sect++;
 		}
@@ -484,6 +505,7 @@ int _tmain(int argc, TCHAR * argv[])
 		{
 			claimed_sections[i] = true;
 			prg_sect[no_sect].type = SECT_TEXT;
+			prg_sect[no_sect].name = "TEXT";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
 			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
@@ -494,14 +516,22 @@ int _tmain(int argc, TCHAR * argv[])
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
 			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
-			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
+			if (elfsectionstartmap.find(psec->get_address()) != elfsectionstartmap.end())
+			{
+				printf("error: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x collides with an existing section\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, file_offset, file_offset + prg_sect[no_sect].padded_size);
+				exit(1);
+			}
+			elfsectionstartmap[prg_sect[no_sect].sect_start] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_end, i);
+			elfsectionboundsmap[prg_sect[no_sect].sect_end] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_start, i);
 
 			file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
 			toshead.PRG_tsize += prg_sect[no_sect].padded_size;         // Update prg text size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
             if (VERBOSE)
             {
-                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+				printf("record: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, prg_sect[no_sect].offset, file_offset);
             }
 			no_sect++;
 		}
@@ -520,24 +550,38 @@ int _tmain(int argc, TCHAR * argv[])
 		{
 			claimed_sections[i] = true;
 			prg_sect[no_sect].type = SECT_DATA;
+			prg_sect[no_sect].name = "DATA";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
 			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
 			prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
+			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
+			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
+
+			//if (elfsectionboundsmap.find(psec->get_address() + psec->get_size()) != elfsectionboundsmap.end())
+			//{
+   //             std::cerr << "error: section [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << " collides with an existing section" << std::endl;
+			//}
 
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
 			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
-			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
+			if (elfsectionstartmap.find(psec->get_address()) != elfsectionstartmap.end())
+			{
+				printf("error: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x collides with an existing section\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, file_offset, file_offset + prg_sect[no_sect].padded_size);
+				exit(1);
+			}
+			elfsectionstartmap[prg_sect[no_sect].sect_start] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_end, i);
+			elfsectionboundsmap[prg_sect[no_sect].sect_end] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_start, i);
 
-			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
-			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
 			file_offset += prg_sect[no_sect].padded_size;               // Update prg BSS offset
 			toshead.PRG_dsize += prg_sect[no_sect].padded_size;         // Update prg data size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
             if (VERBOSE)
             {
-                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+				printf("record: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, prg_sect[no_sect].offset, file_offset);
             }
 			no_sect++;
 		}
@@ -555,23 +599,33 @@ int _tmain(int argc, TCHAR * argv[])
 		{
 			claimed_sections[i] = true;
 			prg_sect[no_sect].type = SECT_BSS;
+			prg_sect[no_sect].name = "BSS";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
+			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
+			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
+			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
 
 			// record section bounds (and index) in a map of <startaddr/index> pairs using endaddr as the sort key,
 			// for identity queries using reloc addresses. this way we can identify & bounds-check the owning
 			// section and identify it from a single query address.
-			elfsectionboundsmap[psec->get_address() + psec->get_size()] = std::pair<uint32_t, int>(psec->get_address(), i);
+			if (elfsectionstartmap.find(psec->get_address()) != elfsectionstartmap.end())
+			{
+				printf("error: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x collides with an existing section\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, file_offset, file_offset + prg_sect[no_sect].padded_size);
+				exit(1);
+			}
+			elfsectionstartmap[prg_sect[no_sect].sect_start] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_end, i);
+			elfsectionboundsmap[prg_sect[no_sect].sect_end] = std::pair<uint32_t, int>(prg_sect[no_sect].sect_start, i);
 
-			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
-			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
-			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
-			file_offset += (uint32_t)psec->get_size();                  // Update prg offset
+			//file_offset += (uint32_t)psec->get_size();                  // Update prg offset
+			file_offset += prg_sect[no_sect].padded_size;                  // Update prg offset
 			toshead.PRG_bsize += prg_sect[no_sect].padded_size;            // Update prg bss size
 			section_map[i] = no_sect;                                   // Mark where in prg_sect this section will lie
             if (VERBOSE)
             {
-                std::cout << "record [" << psec->get_name() << "] esi:" << i << " tsi:" << no_sect << " fbeg:" << (prg_sect[no_sect].offset) << " fend:" << file_offset << std::endl;
+				printf("record: section[%s] elfaddr:0x%08x esi:%d tsi:%d fbeg:0x%x fend:0x%x\n",
+					psec->get_name().c_str(), uint32_t(psec->get_address()), i, no_sect, prg_sect[no_sect].offset, file_offset);
             }
 			no_sect++;
 		}
@@ -624,6 +678,9 @@ int _tmain(int argc, TCHAR * argv[])
 							Elf_Half      section = 0;
 							unsigned char other = 0;
 							symbols.get_symbol(i, name, value, size, bind, type, section, other);
+
+//							if (name.length() > 0)
+//								__asm int 3;
 
 							// Check binding type
 							switch (bind)
@@ -679,11 +736,12 @@ int _tmain(int argc, TCHAR * argv[])
 		assert(elf_entrypoint >= reference_bound->second.first);
 		// get ELF section index pair<endaddr,[index]>
 		int reference_elfidx = reference_bound->second.second;
-		assert(section_map[reference_elfidx] >= 0);
+		int reference_tosidx = section_map[reference_elfidx];
+		assert(reference_tosidx >= 0);
 		// base address of original elf section bounding the reference
 		uint32_t reference_esa = reader.sections[reference_elfidx]->get_address();
 		// base address of new tos section bounding the reference
-		uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
+		uint32_t reference_tsa = prg_sect[reference_tosidx].offset - TOS_FILE_HEADERSIZE;
 
 		uint32_t tos_entrypoint = elf_entrypoint - reference_esa + reference_tsa;
 
@@ -1121,14 +1179,14 @@ int _tmain(int argc, TCHAR * argv[])
 											if (SYMTABLE == SYM_DRI || (SYMTABLE == SYM_EXTEND && strlen(gst_name) <= 8))
 											{
 												symtab[no_sym].type = 0x8200; //TEXT + defined
-												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - TOS_FILE_HEADERSIZE;
 												memcpy(symtab[no_sym].name, gst_name, 8);
 												no_sym++;
 												break;
 											}
 											else
 											{
-												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - TOS_FILE_HEADERSIZE;
 												memcpy(symtab[no_sym].name, gst_name, 8);
 												symtab[no_sym].type = 0x8248; //TEXT + defined + continued on next symbol
 												no_sym++;
@@ -1139,7 +1197,7 @@ int _tmain(int argc, TCHAR * argv[])
 										case SECT_DATA:
 											if (SYMTABLE == SYM_DRI || (SYMTABLE == SYM_EXTEND && strlen(gst_name) <= 8))
 											{
-												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - TOS_FILE_HEADERSIZE;
 												memcpy(symtab[no_sym].name, gst_name, 8);
 												symtab[no_sym].type = 0x8400; //DATA + defined
 												no_sym++;
@@ -1147,7 +1205,7 @@ int _tmain(int argc, TCHAR * argv[])
 											}
 											else
 											{
-												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - TOS_FILE_HEADERSIZE;
 												memcpy(symtab[no_sym].name, gst_name, 8);
 												symtab[no_sym].type = 0x8248; //DATA + defined + continued on next symbol
 												no_sym++;
@@ -1158,7 +1216,7 @@ int _tmain(int argc, TCHAR * argv[])
 										case SECT_BSS:
 											if (SYMTABLE == SYM_DRI || (SYMTABLE == SYM_EXTEND && strlen(gst_name) <= 8))
 											{
-												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - TOS_FILE_HEADERSIZE;
 												memcpy(symtab[no_sym].name, gst_name, 8);
 												symtab[no_sym].type = 0x8100; //BSS + defined
 												no_sym++;
@@ -1166,7 +1224,7 @@ int _tmain(int argc, TCHAR * argv[])
 											}
 											else
 											{
-												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - 28;
+												symtab[no_sym].value = (uint32_t)value - prg_sect[j].sect_start + prg_sect[j].offset - TOS_FILE_HEADERSIZE;
 												memcpy(symtab[no_sym].name, gst_name, 8);
 												symtab[no_sym].type = 0x8248; //BSS + defined + continued on next symbol
 												no_sym++;
@@ -1300,18 +1358,27 @@ int _tmain(int argc, TCHAR * argv[])
 	{
 		// compute reloc address
 
+		std::string &ref_name = tos_relocs[r].elfsymname;
+		//std::string elf_sec_name("-missing-");
+
 		// assume elfsection=-1 to mean zero offset, for tos-based injected relocs.
 		uint32_t esa = 0;
+		ELFIO::section *psec = 0;
 		if (tos_relocs[r].elfsection >= 0)
 		{
-			section *psec = reader.sections[tos_relocs[r].elfsection];
+			psec = reader.sections[tos_relocs[r].elfsection];
 			esa = psec->get_address();
+			//elf_sec_name = psec->get_name();
+		}
+		else
+		{
+	        std::cout << "note: reloc [" << ref_name << "] refers to non-existent elf section" << std::endl;
 		}
 
 		uint32_t tsa = prg_sect[tos_relocs[r].tossection].offset;
 
 		uint32_t tosreloc_file = tos_relocs[r].offset_fixup - esa + tsa;
-		uint32_t tosreloc_mem = tosreloc_file - 28;
+		uint32_t tosreloc_mem = tosreloc_file - TOS_FILE_HEADERSIZE;
 
 		// make sure only one reloc for each address!
 		assert(relocmap.find(tosreloc_mem) == relocmap.end());
@@ -1339,30 +1406,56 @@ int _tmain(int argc, TCHAR * argv[])
 			it++;
 
 			std::string &ref_name = tos_relocs[r].elfsymname;
+			std::string elf_sec_name("-missing-");
 
+			// assume elfsection=-1 to mean zero offset, for tos-based injected relocs.
 			uint32_t esa = 0;
+			ELFIO::section *psec = 0;
 			if (tos_relocs[r].elfsection >= 0)
 			{
-				section *psec = reader.sections[tos_relocs[r].elfsection];
+				psec = reader.sections[tos_relocs[r].elfsection];
 				esa = psec->get_address();
+				elf_sec_name = psec->get_name();
 			}
+			//else
+			//{
+	  //          std::cout << "note: reloc [" << ref_name << "] refers to non-existent elf section" << std::endl;
+			//}
+
+			std::string &tossecname = prg_sect[tos_relocs[r].tossection].name;
 			uint32_t tsa = prg_sect[tos_relocs[r].tossection].offset;
 			uint32_t elfoffset = tos_relocs[r].offset_fixup;
 			uint32_t reference = tos_relocs[r].elfcalcvalue;
 
 			uint32_t tosreloc_file = tos_relocs[r].offset_fixup - esa + tsa;
-			uint32_t tosreloc_mem = tosreloc_file - 28;
+			uint32_t tosreloc_mem = tosreloc_file - TOS_FILE_HEADERSIZE;
 
 			short r_type = tos_relocs[r].type;
 
 			switch (r_type)
 			{
 			case R_68K_32:
+				if (VERBOSE)
+					printf("tosreloc:[%s] type:[R_68k_32] val:[0x%x] elfsec:[%s] tossec:[%s]\n", 
+						ref_name.c_str(), reference, elf_sec_name.c_str(), tossecname.c_str());
 			default:
 				break;
 			case R_68K_PC32:
+				if (VERBOSE)
+					printf("tosreloc:[%s] type:[R_68K_PC32] val:[0x%x=(0x%x+0x%x)] elfsec:[%s] tossec:[%s]\n", 
+						ref_name.c_str(), (reference + elfoffset), reference, elfoffset, elf_sec_name.c_str(), tossecname.c_str());
+				reference += elfoffset;
+				break;
 			case R_68K_PC16:
+				if (VERBOSE)
+					printf("tosreloc:[%s] type:[R_68K_PC32] val:[0x%x=(0x%x+0x%x)] elfsec:[%s] tossec:[%s]\n", 
+						ref_name.c_str(), (reference + elfoffset), reference, elfoffset, elf_sec_name.c_str(), tossecname.c_str());
+				reference += elfoffset;
+				break;
 			case R_68K_PC8:
+				if (VERBOSE)
+					printf("tosreloc:[%s] type:[R_68K_PC32] val:[0x%x=(0x%x+0x%x)] elfsec:[%s] tossec:[%s]\n", 
+						ref_name.c_str(), (reference + elfoffset), reference, elfoffset, elf_sec_name.c_str(), tossecname.c_str());
 				reference += elfoffset;
 				break;
 			}
@@ -1375,7 +1468,7 @@ int _tmain(int argc, TCHAR * argv[])
 			if (reference_bound == elfsectionboundsmap.end())
 				reference_bound = elfsectionboundsmap.upper_bound(reference - 1);
 			// make sure it refers to a section we actually kept
-            if (reference_bound != elfsectionboundsmap.end())
+            if (reference_bound == elfsectionboundsmap.end())
             {
                     printf("error: computed relocation 0x%08x points at an area not mapped by existing sections\n", reference);
                     exit(-1);
@@ -1388,7 +1481,7 @@ int _tmain(int argc, TCHAR * argv[])
 			// base address of original elf section bounding the reference
 			uint32_t reference_esa = reader.sections[reference_elfidx]->get_address();
 			// base address of new tos section bounding the reference
-			uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - 28;
+			uint32_t reference_tsa = prg_sect[section_map[reference_elfidx]].offset - TOS_FILE_HEADERSIZE;
 
 			if (DEBUG || (r_type != R_68K_32))
 			{
@@ -1410,6 +1503,7 @@ int _tmain(int argc, TCHAR * argv[])
 					// injected relocs which did not originate from the elf
 					printf("emitting injected reloc\n");
 				}
+				else
 				if (ref_name.length() > 0)
 				{
 					// points at a named public symbol
