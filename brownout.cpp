@@ -108,7 +108,7 @@ Everything else is released under the WTFPL. Probably.
 void demangle(std::string &name, std::string &demangled);
 
 // Little endian to big endian conversion depending on platform
-#if defined(__linux__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__)
 #include <endian.h>
 #define BYTESWAP32 htobe32
 #define BYTESWAP16 htobe16
@@ -170,7 +170,7 @@ CSimpleOpt::SOption g_rgOptions[] =
 	SO_END_OF_OPTIONS                       // END
 };
 
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__APPLE__)
 #pragma pack(push,2)
 #endif
 typedef struct
@@ -184,7 +184,7 @@ typedef struct
 	uint32_t    PRGFLAGS;   // This LONG contains flags which define certain process characteristics (as defined below).
 	uint16_t    ABSFLAG;    // This WORD flag should be non-zero to indicate that the program has no fixups or 0 to indicate it does.Since some versions of TOS handle files with this value being non-zero incorrectly, it is better to represent a program having no fixups with 0 here and placing a 0 longword as the fixup offset.
 } PRG_HEADER;
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__APPLE__)
 #pragma pack(pop)
 #endif
 
@@ -217,7 +217,7 @@ typedef struct
 
 TOS_RELOC tos_relocs[64 * 1024];                // Enough? Who knows!
 
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__APPLE__)
 #pragma pack(push,2)
 #endif
 typedef struct
@@ -226,7 +226,7 @@ typedef struct
 	uint16_t type;
 	uint32_t value;
 } GST_SYMBOL;
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__APPLE__)
 #pragma pack(pop)
 #endif
 
