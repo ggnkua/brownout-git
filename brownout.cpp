@@ -270,7 +270,7 @@ static elfsectionboundsmap_t::iterator get_section_for_va(elfsectionboundsmap_t 
 	elfsectionboundsmap_t::iterator reference_bound = smap.upper_bound(_va);	
 	// 2) if this returns a section which doesn't contain the VA (VA >= section_start)
 	// then it must be a reference to the end of a section, so we use an end-inclusive search
-	if (_va < reference_bound->second.first);
+	if (_va < reference_bound->second.first)
 		reference_bound = smap.lower_bound(_va);
 
 	// make sure it refers to a section we actually kept
