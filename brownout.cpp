@@ -101,7 +101,7 @@ Everything else is released under the WTFPL. Probably.
 
 // better at catching things early inside VS debugger
 #ifdef _MSC_VER
-//#define assert(_x_) { if (!(_x_)) { __debugbreak(); }; }
+#define assert(_x_) { if (!(_x_)) { __debugbreak(); }; }
 //#define assert(_x_) { if (!(_x_)) { __asm int 3 }; }
 #endif
 
@@ -261,6 +261,31 @@ enum
 uint32_t relo_data[1];
 bool DEMANGLE = false;
 
+typedef std::map<uint32_t, std::pair<uint32_t, int> > elfsectionboundsmap_t;
+
+static elfsectionboundsmap_t::iterator get_section_for_va(elfsectionboundsmap_t &smap, uint32_t _va)
+{
+	// find ELF section this reference belongs to
+	// 1) search for first section with (VA < section_end)
+	elfsectionboundsmap_t::iterator reference_bound = smap.upper_bound(_va);	
+	// 2) if this returns a section which doesn't contain the VA (VA >= section_start)
+	// then it must be a reference to the end of a section, so we use an end-inclusive search
+	if (_va < reference_bound->second.first);
+		reference_bound = smap.lower_bound(_va);
+
+	// make sure it refers to a section we actually kept
+    if (reference_bound == smap.end())
+    {
+            printf("error: reference 0x%08x points at an area not mapped by existing sections\n", _va);
+            exit(-1);
+    }
+
+	// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
+	assert(_va >= reference_bound->second.first);
+
+	return reference_bound;
+}
+
 int _tmain(int argc, TCHAR * argv[])
 {
 	PRG_HEADER toshead = { 0x601a, 0, 0, 0, 0, 0, 0, 0 };  // Set up TOS header
@@ -369,7 +394,6 @@ int _tmain(int argc, TCHAR * argv[])
 
 	Elf_Half sec_num = reader.sections.size();
 
-	typedef std::map<uint32_t, std::pair<uint32_t, int> > elfsectionboundsmap_t;
 	elfsectionboundsmap_t elfsectionboundsmap;
 	elfsectionboundsmap_t elfsectionstartmap;
 
@@ -724,16 +748,7 @@ int _tmain(int argc, TCHAR * argv[])
 		}
 
 		// find ELF section this reference belongs to (section with lower bound <= query address)
-		elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(elf_entrypoint);
-		// check for references to ends of sections where subsequent section (if any) doesn't immediately start.
-		// this handles edge cases like _bss_end which are not included in the section begin-end range
-		// note: shouldn't ever happen here but handled for consistency anyway.
-		if (reference_bound == elfsectionboundsmap.end())
-			reference_bound = elfsectionboundsmap.upper_bound(elf_entrypoint - 1);
-		// make sure it refers to a section we actually kept
-		assert(reference_bound != elfsectionboundsmap.end());
-		// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
-		assert(elf_entrypoint >= reference_bound->second.first);
+		elfsectionboundsmap_t::iterator reference_bound = get_section_for_va(elfsectionboundsmap, elf_entrypoint);
 		// get ELF section index pair<endaddr,[index]>
 		int reference_elfidx = reference_bound->second.second;
 		int reference_tosidx = section_map[reference_elfidx];
@@ -875,17 +890,8 @@ int _tmain(int argc, TCHAR * argv[])
 
 						}
 
-						// find ELF section this reloc belongs to (section with lower bound <= query address)
-						elfsectionboundsmap_t::iterator reloc_bound = elfsectionboundsmap.upper_bound(offset);
-						// check for references to ends of sections where subsequent section (if any) doesn't immediately start.
-						// this handles edge cases like _bss_end which are not included in the section begin-end range
-						// note: shouldn't ever happen here but handled for consistency anyway.
-						if (reloc_bound == elfsectionboundsmap.end())
-							reloc_bound = elfsectionboundsmap.upper_bound(offset - 1);
-						// make sure it refers to a section we actually kept
-						assert(reloc_bound != elfsectionboundsmap.end());
-						// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
-						assert(offset >= reloc_bound->second.first);
+						// find ELF section this reference belongs to (section with lower bound <= query address)
+						elfsectionboundsmap_t::iterator reloc_bound = get_section_for_va(elfsectionboundsmap, offset);
 						// get ELF section index pair<endaddr,[index]>
 						int reloc_elfidx = reloc_bound->second.second;
 						assert(section_map[reloc_elfidx] >= 0);
@@ -1460,21 +1466,8 @@ int _tmain(int argc, TCHAR * argv[])
 				break;
 			}
 
-
 			// find ELF section this reference belongs to (section with lower bound <= query address)
-			elfsectionboundsmap_t::iterator reference_bound = elfsectionboundsmap.upper_bound(reference);
-			// check for references to ends of sections where subsequent section (if any) doesn't immediately start.
-			// this handles edge cases like _bss_end which are not included in the section begin-end range
-			if (reference_bound == elfsectionboundsmap.end())
-				reference_bound = elfsectionboundsmap.upper_bound(reference - 1);
-			// make sure it refers to a section we actually kept
-            if (reference_bound == elfsectionboundsmap.end())
-            {
-                    printf("error: computed relocation 0x%08x points at an area not mapped by existing sections\n", reference);
-                    exit(-1);
-            }
-			// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
-			assert(reference >= reference_bound->second.first);
+			elfsectionboundsmap_t::iterator reference_bound = get_section_for_va(elfsectionboundsmap, reference);
 			// get ELF section index pair<endaddr,[index]>
 			int reference_elfidx = reference_bound->second.second;
 			assert(section_map[reference_elfidx] >= 0);
