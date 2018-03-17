@@ -108,10 +108,27 @@ Everything else is released under the WTFPL. Probably.
 void demangle(std::string &name, std::string &demangled);
 
 // Little endian to big endian conversion depending on platform
-#if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__)
+#if defined(__linux__) || defined(__CYGWIN__)
 #include <endian.h>
 #define BYTESWAP32 htobe32
 #define BYTESWAP16 htobe16
+#endif
+#if defined(__MINGW32__)
+static __inline unsigned short
+__bswap_16 (unsigned short __x)
+{
+    return (__x >> 8) | (__x << 8);
+}
+
+static __inline unsigned int
+__bswap_32 (unsigned int __x)
+{
+    return (__bswap_16 (__x & 0xffff) << 16) | (__bswap_16 (__x >> 16));
+} 
+
+#define BYTESWAP32 __bswap_32
+#define BYTESWAP16 __bswap_16
+
 #endif
 #if defined(__APPLE__)
 #include "mac_endian.h"
