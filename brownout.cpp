@@ -1328,7 +1328,7 @@ int _tmain(int argc, TCHAR * argv[])
     // Figure out how big our output program will be
     int prgsize= toshead.PRG_tsize + toshead.PRG_dsize + toshead.PRG_ssize;
     if (no_relocs > 0)
-        prgsize = 1024*1024;        // Let's assume that 1mb should be enough for relocations? (O_o otherwise a ton of code has to be added for analytical calculation)
+        prgsize += 1024*1024;        // Let's assume that 1mb should be enough for relocations? (O_o otherwise a ton of code has to be added for analytical calculation)
     char *prgbuffer = (char *)malloc(prgsize);
     char *prgbuffer_start = prgbuffer;
 
