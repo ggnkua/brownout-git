@@ -1,0 +1,6 @@
+brownout.vs*/Debug/*
+brownout.vs*/ipch/*
+brownout.vs*/*.sdf
+brownout.vs*/*.suo
+brownout.vs*/*.filters
+brownout.vs*/*.user
