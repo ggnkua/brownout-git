@@ -17,7 +17,7 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-#define VERSION bronze
+#define VERSION buff
 
 #define STRINGIFY2(X) #X
 #define STRINGIFY(X) STRINGIFY2(X)
@@ -232,7 +232,7 @@ typedef struct
 
 } TOS_RELOC;
 
-TOS_RELOC tos_relocs[64 * 1024];                // Enough? Who knows!
+TOS_RELOC tos_relocs[256 * 1024];                // Enough? Who knows!
 
 #if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__APPLE__)
 #pragma pack(push,2)
@@ -903,7 +903,7 @@ int _tmain(int argc, TCHAR * argv[])
 								<< "brownout cannot produce a valid TOS executable under"
 								<< " these circumstances. Please correct the issue."
 								<< std::endl;
-							exit(0);
+							exit(-1);
 
 						}
 
@@ -1328,7 +1328,7 @@ int _tmain(int argc, TCHAR * argv[])
     // Figure out how big our output program will be
     int prgsize= toshead.PRG_tsize + toshead.PRG_dsize + toshead.PRG_ssize;
     if (no_relocs > 0)
-        prgsize += 1024*1024;        // Let's assume that 1mb should be enough for relocations? (O_o otherwise a ton of code has to be added for analytical calculation)
+        prgsize += 8*1024*1024;        // Let's assume that 1mb should be enough for relocations? (O_o otherwise a ton of code has to be added for analytical calculation)
     char *prgbuffer = (char *)malloc(prgsize);
     char *prgbuffer_start = prgbuffer;
 
