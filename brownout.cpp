@@ -36,6 +36,14 @@ Everything else is released under the WTFPL. Probably.
 //       "creative" optimisations so it's turned on for selective structs.
 //       And it's too early to start drinking...
 #pragma pack(2)
+
+// Oooh look, VS 2019 thinks it's a bad idea to use #pragma pack because
+// it would lead to corruption. Like, we don't know why we want to pack structs
+// because "who packs structs? We have memory and all. Are you some kind of
+// weirdo?". And, wow, they had to take the extra mile and make this a
+// fatal compilation error too. They really don't want people doing this!
+/// Pffffft, anyway, defining this magic switch makes bad error go away.
+#define WINDOWS_IGNORE_PACKING_MISMATCH
 #endif
 
 // M68k defines lifted from bintools 2.27.
