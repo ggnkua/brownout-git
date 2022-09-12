@@ -17,7 +17,7 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-#define VERSION buff
+#define VERSION ecru
 
 #define STRINGIFY2(X) #X
 #define STRINGIFY(X) STRINGIFY2(X)
@@ -240,7 +240,9 @@ typedef struct
 
 } TOS_RELOC;
 
-TOS_RELOC tos_relocs[256 * 1024];                // Enough? Who knows!
+#define MAX_TOS_RELOCS (256*1024)
+
+TOS_RELOC tos_relocs[MAX_TOS_RELOCS];                // Enough? Who knows!
 
 #if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__APPLE__)
 #pragma pack(push,2)
@@ -293,17 +295,28 @@ static elfsectionboundsmap_t::iterator get_section_for_va(elfsectionboundsmap_t 
 	// find ELF section this reference belongs to
 	// 1) search for first section with (VA < section_end)
 	elfsectionboundsmap_t::iterator reference_bound = smap.upper_bound(_va);	
-	// 2) if this returns a section which doesn't contain the VA (VA >= section_start)
-	// then it must be a reference to the end of a section, so we use an end-inclusive search
-	if (_va < reference_bound->second.first)
-		reference_bound = smap.lower_bound(_va);
 
-	// make sure it refers to a section we actually kept
+	// 2) no result could mean we're pointing at the very end of the last section, which is still valid (or beyond - which would be a fail)
     if (reference_bound == smap.end())
     {
-            printf("error: reference 0x%08x points at an area not mapped by existing sections\n", _va);
-            exit(-1);
+		// check end of last section
+		auto last = std::prev(reference_bound);
+		if (last->first == _va)
+		{
+			// yup - pointing at the end of last section
+			return last;
+		}
+
+		// pointing somewhere unmapped, beyond last section
+		printf("error: reference 0x%08x points at an area not mapped by existing sections\n", _va);
+		exit(-1);
     }
+
+	// 3) if this returns a section which doesn't contain the VA (VA >= section_start)
+	// then it must be a reference to the end of a section (but not the last section, handled above), 
+	// so we use an end-inclusive search to make sure it refers to a section we actually kept
+	//if (_va < reference_bound->second.first)
+	//	reference_bound = smap.lower_bound(_va);
 
 	// make sure the reference is actually inside the nearest section (i.e. not < section startaddr) pair<[startaddr],index>
 	assert(_va >= reference_bound->second.first);
@@ -827,6 +840,12 @@ int _tmain(int argc, TCHAR * argv[])
 			tos_relocs[no_relocs].absolute = true;
 			no_relocs++;
 
+			if (no_relocs > MAX_TOS_RELOCS)
+			{
+				std::cerr << "error: tos_relocs overflow! increase MAX_TOS_RELOCS and rebuild!" << std::endl;
+				exit(1);
+			}
+
 		}
 	}
 
@@ -881,7 +900,7 @@ int _tmain(int argc, TCHAR * argv[])
 						case R_68K_PC32:	typestr = "PC32"; break;
 						case R_68K_PC16:	typestr = "PC16"; break;
 						case R_68K_PC8:		typestr = "PC8"; break;
-						default: break;
+						default:			typestr = "???"; break;
 						}
 
 						std::cout << "ELF R_68K_" << typestr
@@ -935,6 +954,12 @@ int _tmain(int argc, TCHAR * argv[])
 						// the pc-relative ones are just baked into the text/data after section rearrangement.
 						tos_relocs[no_relocs].absolute = (type == R_68K_32);
 						no_relocs++;
+
+						if (no_relocs > MAX_TOS_RELOCS)
+						{
+							std::cerr << "error: tos_relocs overflow! increase MAX_TOS_RELOCS and rebuild!" << std::endl;
+							exit(1);
+						}
 					}
 					break;
 				}
@@ -956,6 +981,36 @@ int _tmain(int argc, TCHAR * argv[])
 					break;
 				}
 
+				case R_68K_GOT32:
+				case R_68K_GOT16:
+				case R_68K_GOT8:
+				case R_68K_GOT32O:
+				case R_68K_GOT16O:
+				case R_68K_GOT8O:
+				case R_68K_PLT32:
+				case R_68K_PLT16:
+				case R_68K_PLT8:
+				case R_68K_PLT32O:
+				case R_68K_PLT16O:
+				case R_68K_PLT8O:
+				{
+					std::cerr << "error: encountered unhandled relocation type [" << type << "]"
+						<< " in section " << i << " [" << psec->get_name() << "]"
+						<< " offset:" << offset
+						<< " symval:" << symbolValue
+						<< " sym:" << symbolName
+						<< " addend:" << addend
+						<< " calc:" << calcValue
+						<< std::endl;
+
+					std::cerr << " these relocations refer to GOT/PLT sections not supported by TOS." << std::endl;
+					std::cerr << " please recompile affected Atari code with '-fno-plt -fno-pic' options" << std::endl;
+
+					exit(1);
+
+					break;
+				}
+
 				default:
 				{
 					std::cerr << "error: encountered unhandled R_68K_?? relocation type [" << type << "]"
@@ -966,6 +1021,8 @@ int _tmain(int argc, TCHAR * argv[])
 						<< " addend:" << addend
 						<< " calc:" << calcValue
 						<< std::endl;
+
+					exit(1);
 
 					break;
 				}
@@ -1479,13 +1536,13 @@ int _tmain(int argc, TCHAR * argv[])
 				break;
 			case R_68K_PC16:
 				if (VERBOSE)
-					printf("tosreloc:[%s] type:[R_68K_PC32] val:[0x%x=(0x%x+0x%x)] elfsec:[%s] tossec:[%s]\n", 
+					printf("tosreloc:[%s] type:[R_68K_PC16] val:[0x%x=(0x%x+0x%x)] elfsec:[%s] tossec:[%s]\n", 
 						ref_name.c_str(), (reference + elfoffset), reference, elfoffset, elf_sec_name.c_str(), tossecname.c_str());
 				reference += elfoffset;
 				break;
 			case R_68K_PC8:
 				if (VERBOSE)
-					printf("tosreloc:[%s] type:[R_68K_PC32] val:[0x%x=(0x%x+0x%x)] elfsec:[%s] tossec:[%s]\n", 
+					printf("tosreloc:[%s] type:[R_68K_PC8] val:[0x%x=(0x%x+0x%x)] elfsec:[%s] tossec:[%s]\n", 
 						ref_name.c_str(), (reference + elfoffset), reference, elfoffset, elf_sec_name.c_str(), tossecname.c_str());
 				reference += elfoffset;
 				break;
@@ -1617,8 +1674,34 @@ int _tmain(int argc, TCHAR * argv[])
 				break;
 
 			case R_68K_PC16:
-				std::cerr << "error: won't process cross-section 16bit PC-relative relocation type [R_68K_PC16]" << std::endl;
-				exit(1);
+				//std::cerr << "error: won't process cross-section 16bit PC-relative relocation type [R_68K_PC16]" << std::endl;
+				//exit(1);
+
+				//assert(tos_relocs[r].elfsection != reference_elfidx);
+
+				//if (tos_relocs[r].elfsection != reference_elfidx)
+				if (tos_relocs[r].elfsection >= 0)
+				{
+					// adjust the REL part to compensate for section rearrangement
+					// this is a PC-relative relocation so subtract reloc location in TOS VA
+					reference -= reference_esa;
+					reference += reference_tsa;
+				}
+
+				reference -= tosreloc_mem;
+
+				if (((int)reference < -32768) || ((int)reference >= 32768))
+				{
+					std::cerr << "error: can't process 16bit PC-relative relocation type [R_68K_PC16] - calculated offset exceeds 16bit range!" << std::endl;
+					exit(1);
+				}
+
+				// write the updated 32bit value
+				//relo_data[0] = BYTESWAP32(reference);
+				//fseek(tosfile, (long)tosreloc_file, 0);
+				//fwrite(relo_data, 1, 4, tosfile);
+                *(uint16_t *)&prgbuffer_start[tosreloc_file] = BYTESWAP16((uint16_t)reference);
+
 				break;
 
 			case R_68K_PC8:
@@ -1766,11 +1849,11 @@ std::string exec(const char* cmd)
 void demangle(std::string &name, std::string &demangled)
 {
 
-	demangled = exec(((std::string)"m68k-ataribrown-elf-c++filt " + name).c_str());
+	demangled = exec(((std::string)"m68k-atarimegabrown-elf-c++filt " + name).c_str());
 
     if (demangled== "")
     {
-        std::cout << "Note: m68k-ataribrown-elf-c++filt not found in your path - turning demangling off." << std::endl;
+        std::cout << "Note: m68k-atarimegabrown-elf-c++filt not found in your path - turning demangling off." << std::endl;
         DEMANGLE = false;
     }
 

@@ -4,3 +4,4 @@ brownout.vs*/*.sdf
 brownout.vs*/*.suo
 brownout.vs*/*.filters
 brownout.vs*/*.user
+brownout.vs*/.vs/*
