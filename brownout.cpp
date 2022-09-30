@@ -107,6 +107,68 @@ Everything else is released under the WTFPL. Probably.
 #include <iostream>
 #include <memory>
 
+// default c++filt, can also be set on commandline
+std::string brownfilter = "m68k-atarimegabrown-elf-c++filt";
+
+
+/* some reference code for GOT/PLT relocation handling - although we will probably never want to have
+   these present in the first place since they can change code generation at the referring site to something 
+   unusable at runtime without the section being populated.
+
+// copied from Atom OS
+
+R_386_GOTOFF (== 0x9)
+This relocation type computes the difference between a symbol's value and the address of the global offset table. It also instructs the link-editor to create the global offset table.
+
+R_386_GOTPC (== 0xA)
+This relocation type resembles R_386_PC32, except it uses the address of the global offset table in its calculation
+
+    uint GOT = Heap.kmalloc(1024 * 128); // 128 KB
+    ...
+    private static void Relocate(Elf_Header* aHeader, Elf_Shdr* aShdr, uint GOT)
+    {
+        uint BaseAddress = (uint)aHeader;
+        Elf32_Rel* Reloc = (Elf32_Rel*)aShdr->sh_addr;
+        Elf_Shdr* TargetSection = (Elf_Shdr*)(BaseAddress + aHeader->e_shoff) + aShdr->sh_info;
+
+        uint RelocCount = aShdr->sh_size / aShdr->sh_entsize;
+
+        uint SymIdx, SymVal, RelocType;
+        for (int i = 0; i < RelocCount; i++, Reloc++)
+        {
+            SymVal = 0;
+            SymIdx = (Reloc->r_info >> 8);
+            RelocType = Reloc->r_info & 0xFF;
+
+            if (SymIdx != SHN_UNDEF)
+            {
+                if (RelocType == R_386_GOTPC)
+                    SymVal = GOT;
+                else
+                    SymVal = GetSymValue(aHeader, TargetSection->sh_link, SymIdx);
+            }
+
+            uint* add_ref = (uint*)(TargetSection->sh_addr + Reloc->r_offset);
+            switch(RelocType)
+            {
+                case R_386_32:
+                    *add_ref = SymVal + *add_ref; // S + A
+                    break;
+                case R_386_GOTOFF:
+                    *add_ref = SymVal + *add_ref - GOT; // S + A - GOT
+                    break;
+                case R_386_PLT32:   // L + A - P
+                case R_386_PC32:    // S + A - P
+                case R_386_GOTPC:   // GOT + A - P
+                    *add_ref = SymVal + *add_ref - (uint)add_ref;
+                    break;
+                default:
+                    throw new Exception("[ELF]: Unsupported Relocation type");
+            }
+        }
+    }
+*/
+
 // better at catching things early inside VS debugger
 #ifdef _MSC_VER
 #define assert(_x_) { if (!(_x_)) { __debugbreak(); }; }
@@ -166,19 +228,25 @@ enum
 	OPT_OUTFILE,
 	OPT_PRGFLAGS,
 	OPT_SYMTABLE,
-	OPT_ELF_HEADER,
-	OPT_ELF_SECTION_HEADERS,
-	OPT_ELF_SEGMENT_HEADERS,
-	OPT_ELF_SYMBOL_TABLES,
-	OPT_ELF_NOTES,
-	OPT_ELF_DYNAMIC_TAGS,
-	OPT_ELF_SECTION_DATAS,
-	OPT_ELF_SEGMENT_DATAS,
-	OPT_HELP,
-	OPT_DEBUG,
-	OPT_DEMANGLE,
 	OPT_EXTEND,
-    OPT_VERBOSE
+	OPT_DEMANGLE,
+	OPT_CXXFILT,
+	//
+	// OPT_ELF_HEADER,
+	// OPT_ELF_SECTION_HEADERS,
+	// OPT_ELF_SEGMENT_HEADERS,
+	// OPT_ELF_SYMBOL_TABLES,
+	// OPT_ELF_NOTES,
+	// OPT_ELF_DYNAMIC_TAGS,
+	// OPT_ELF_SECTION_DATAS,
+	// OPT_ELF_SEGMENT_DATAS,
+	//
+	//
+    OPT_VERBOSE,
+	OPT_DEBUG,
+	OPT_HELP,
+	//
+	OPT_END__
 };
 
 CSimpleOpt::SOption g_rgOptions[] =
@@ -187,13 +255,36 @@ CSimpleOpt::SOption g_rgOptions[] =
 	{ OPT_OUTFILE, _T("-o"), SO_REQ_SEP },
 	{ OPT_PRGFLAGS, _T("-p"), SO_REQ_SEP },
 	{ OPT_SYMTABLE, _T("-s"), SO_NONE },
-	{ OPT_DEBUG, _T("-d"), SO_NONE },
 	{ OPT_EXTEND, _T("-x"), SO_NONE },
 	{ OPT_DEMANGLE, _T("-f"), SO_NONE },
-	{ OPT_HELP, _T("-h"), SO_NONE },
+    { OPT_CXXFILT, _T("-cxxf"), SO_REQ_SEP },
+	//
     { OPT_VERBOSE, _T("-v"), SO_NONE },
+	{ OPT_DEBUG, _T("-d"), SO_NONE },
+	{ OPT_HELP, _T("-h"), SO_NONE },
+
 	SO_END_OF_OPTIONS                       // END
 };
+
+void printhelp()
+{
+	printf("brownout version \"" STRINGIFY(VERSION) "\"\n"
+        "Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d] [-x]\n"
+		"-i input ELF file.\n"
+		"-o output TOS file.\n"
+		"-p to specify TOS PRGFLAGS.\n"
+		"-s will create a symbol table.\n"
+		"-x will create an extended symbol table.\n"
+		"-f will turn on C++ symbol demangling via GCC's c++filt tool (i.e. you don't get ugly symbol names).\n"
+		"-cxxf to specify c++filt demangling tool for any gcc version (if different from default: [%s]).\n"
+        "-v will turn on verbose mode (less spammy than debugging)\n"
+		"-d will turn on verbose debugging.\n"
+        "-h shows help\n",
+		//
+		brownfilter.c_str() // c++filt default name
+	);
+}
+
 
 #if defined(__linux__) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__APPLE__)
 #pragma pack(push,2)
@@ -214,17 +305,6 @@ typedef struct
 #endif
 
 using namespace ELFIO;
-
-void printhelp()
-{
-	printf("brownout version \"" STRINGIFY(VERSION) "\"\n"
-        "Usage: brownout -i <input_elf_file_name> -o <output_tos_file_name> [-p PRGFLAGS] [-s] [-d] [-x]\n"
-		"-s will create a symbol table.\n"
-		"-x will create an extended symbol table.\n"
-		"-d will turn on verbose debugging.\n"
-		"-f will turn on C++ symbol demangling (i.e. you don't get ugly symbol names).\n"
-        "-v will turn on verbose mode (less spammy than debugging)\n");
-}
 
 static const int TOS_FILE_HEADERSIZE = 28;
 
@@ -383,6 +463,10 @@ int _tmain(int argc, TCHAR * argv[])
 			else if (args.OptionId() == OPT_DEMANGLE)
 			{
 				DEMANGLE = true;
+			}
+			else if (args.OptionId() == OPT_CXXFILT)
+			{
+				brownfilter = (std::string)args.OptionArg();
 			}
             else if (args.OptionId() == OPT_VERBOSE)
             {
@@ -798,7 +882,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 		uint32_t tos_entrypoint = elf_entrypoint - reference_esa + reference_tsa;
 
-        if (VERBOSE)
+//        if (VERBOSE)
         {
             printf("entrypoint located at eVA:$%06x (tVA:$%06x)\n", elf_entrypoint, tos_entrypoint);
         }
@@ -1849,11 +1933,11 @@ std::string exec(const char* cmd)
 void demangle(std::string &name, std::string &demangled)
 {
 
-	demangled = exec(((std::string)"m68k-atarimegabrown-elf-c++filt " + name).c_str());
+	demangled = exec((brownfilter + " " + name).c_str());
 
     if (demangled== "")
     {
-        std::cout << "Note: m68k-atarimegabrown-elf-c++filt not found in your path - turning demangling off." << std::endl;
+        std::cout << "Note: " << brownfilter << " not found in your path - turning demangling off." << std::endl;
         DEMANGLE = false;
     }
 
