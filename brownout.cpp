@@ -17,7 +17,7 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-#define VERSION ecru
+#define VERSION fawn
 
 #define STRINGIFY2(X) #X
 #define STRINGIFY(X) STRINGIFY2(X)
@@ -367,8 +367,9 @@ enum
 
 uint32_t relo_data[1];
 bool DEMANGLE = false;
-
+Elf_Half sec_num;
 typedef std::map<uint32_t, std::pair<uint32_t, int> > elfsectionboundsmap_t;
+elfio reader;
 
 static elfsectionboundsmap_t::iterator get_section_for_va(elfsectionboundsmap_t &smap, uint32_t _va)
 {
@@ -387,8 +388,23 @@ static elfsectionboundsmap_t::iterator get_section_for_va(elfsectionboundsmap_t 
 			return last;
 		}
 
-		// pointing somewhere unmapped, beyond last section
+		// pointing somewhere unmapped, beyond last section.
+		// It might have been a section we filtered out during the gathering of sections,
+		// so let's re-read all sections and try to find which section this relocation is mapped.
+		// At least then the user will have more info to look into the problem
 		printf("error: reference 0x%08x points at an area not mapped by existing sections\n", _va);
+		for (int i = 0; i < sec_num; i++)
+		{
+			uint32_t sect_start, sect_end;
+			ELFIO::section *psec = reader.sections[i];
+			sect_start = psec->get_address();
+			sect_end = sect_start + psec->get_size();
+			if (sect_start <= _va && sect_end >= _va)
+			{
+				printf("This reference is located at section %s\n", psec->get_name().c_str());
+				break;
+			}
+		}
 		exit(-1);
     }
 
@@ -486,8 +502,6 @@ int _tmain(int argc, TCHAR * argv[])
 		return 1;
 	}
 
-	elfio reader;
-
 	if (!reader.load(infile))
 	{
 		printf("File %s is not found or it is not an ELF file\n", infile);
@@ -514,7 +528,7 @@ int _tmain(int argc, TCHAR * argv[])
 
 	// From here on starts the browness - helmets on!
 
-	Elf_Half sec_num = reader.sections.size();
+	sec_num = reader.sections.size();
 
 	elfsectionboundsmap_t elfsectionboundsmap;
 	elfsectionboundsmap_t elfsectionstartmap;
@@ -647,6 +661,7 @@ int _tmain(int argc, TCHAR * argv[])
 			)
 			&& (psec->get_size() > 0)
 			&& (psec->get_name().find(".debug_") == std::string::npos)
+			&& (psec->get_name().find(".init") == std::string::npos)
 		)
 		{
 			claimed_sections[i] = true;
@@ -691,7 +706,8 @@ int _tmain(int argc, TCHAR * argv[])
 		if ((psec->get_type() == SHT_PROGBITS) &&
 			(psec->get_flags() & SHF_ALLOC) &&
 			(psec->get_size() > 0) &&
-			(psec->get_name().find(".debug_") == std::string::npos)
+			(psec->get_name().find(".debug_") == std::string::npos) &&
+			(psec->get_name().find(".init") == std::string::npos)
 			)
 		{
 			claimed_sections[i] = true;
@@ -740,7 +756,8 @@ int _tmain(int argc, TCHAR * argv[])
 		psec = reader.sections[i];
 		if ((psec->get_type() == SHT_NOBITS) &&
 			(psec->get_size() > 0) &&
-			(psec->get_name().find(".debug_") == std::string::npos)
+			(psec->get_name().find(".debug_") == std::string::npos) &&
+			(psec->get_name().find(".init") == std::string::npos)
 			)
 		{
 			claimed_sections[i] = true;
