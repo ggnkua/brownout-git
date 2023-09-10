@@ -661,7 +661,7 @@ int _tmain(int argc, TCHAR * argv[])
 			)
 			&& (psec->get_size() > 0)
 			&& (psec->get_name().find(".debug_") == std::string::npos)
-			&& (psec->get_name().find(".init") == std::string::npos)
+			//&& (psec->get_name().find(".init") == std::string::npos)
 		)
 		{
 			claimed_sections[i] = true;
