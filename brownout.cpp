@@ -17,7 +17,7 @@ Everything else is released under the WTFPL. Probably.
 
 */
 
-#define VERSION fawn
+#define VERSION terra-cotta
 
 #define STRINGIFY2(X) #X
 #define STRINGIFY(X) STRINGIFY2(X)
@@ -365,6 +365,13 @@ enum
 	SYM_EXTEND
 };
 
+static const int c_section_size_alignment = 4;
+
+static uint32_t align_section(uint32_t v)
+{
+	return (v + (c_section_size_alignment - 1)) & ~(c_section_size_alignment - 1);
+}
+
 uint32_t relo_data[1];
 bool DEMANGLE = false;
 Elf_Half sec_num;
@@ -616,7 +623,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].name = "TEXT";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
-			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
+			prg_sect[no_sect].padded_size = align_section(prg_sect[no_sect].size); // Pad section size so it will be even if needed
 			prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
 			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
 			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
@@ -669,7 +676,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].name = "TEXT";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
-			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
+			prg_sect[no_sect].padded_size = align_section(prg_sect[no_sect].size); // Pad section size so it will be even if needed
 			prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
 			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
 			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
@@ -715,7 +722,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].name = "DATA";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
-			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
+			prg_sect[no_sect].padded_size = align_section(prg_sect[no_sect].size); // Pad section size so it will be even if needed
 			prg_sect[no_sect].data = (const char *)psec->get_data();    // Mark section's start of data
 			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
 			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
@@ -765,7 +772,7 @@ int _tmain(int argc, TCHAR * argv[])
 			prg_sect[no_sect].name = "BSS";
 			prg_sect[no_sect].offset = file_offset;                     // Mark start offset of section inside .prg
 			prg_sect[no_sect].size = (uint32_t)psec->get_size();        // Mark section's size
-			prg_sect[no_sect].padded_size = (prg_sect[no_sect].size + 1) & 0xfffffffe; // Pad section size so it will be even if needed
+			prg_sect[no_sect].padded_size = align_section(prg_sect[no_sect].size); // Pad section size so it will be even if needed
 			prg_sect[no_sect].sect_start = (uint32_t)psec->get_address();   // Mark elf section's start (for symbol outputting)
 			prg_sect[no_sect].sect_end = (uint32_t)psec->get_address() + (uint32_t)psec->get_size(); // Mark elf section's end (for symbol outputting)
 
@@ -1511,13 +1518,21 @@ int _tmain(int argc, TCHAR * argv[])
 			//fwrite(prg_sect[i].data, prg_sect[i].size, 1, tosfile);
             memcpy(prgbuffer, prg_sect[i].data, prg_sect[i].size);
             prgbuffer = prgbuffer + prg_sect[i].size;
+			size_t padding_remains = prg_sect[i].padded_size - prg_sect[i].size;
+			while (padding_remains > 0)
+			{
+				*prgbuffer++ = 0;
+				--padding_remains;
+			}
+
+			/*
 			if ((prg_sect[i].size & 1) == 1)
 			{
 				// Odd size, add padding
 				//char pad = 0;
 				//fwrite(&pad, 1, 1, tosfile);
                 *prgbuffer++ = 0;
-			}
+			}*/
 		}
 		// TODO2: For 030 executables pad sections to 4 bytes?
 	}
